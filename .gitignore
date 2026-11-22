@@ -12,6 +12,15 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+data/backups/
+data/certs/
+
+# Test cache
+.pytest_cache/
+
+# Android signing files (future milestone)
+*.jks
+key.properties
 
 # Streamlit secrets
 .streamlit/secrets.toml
