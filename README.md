@@ -4,6 +4,11 @@ A small, private personal finance tracker built with Python, Streamlit and
 SQLite. It runs entirely on your own computer — there are no accounts, no bank
 connections and no data leaves your machine.
 
+The project now has two interfaces that share the same local database:
+
+- `app.py` — the original Streamlit web app.
+- `desktop_app.py` — a native Windows window built with CustomTkinter.
+
 ## Milestone 1 features
 
 - Automatically creates a local SQLite database on first run.
@@ -19,13 +24,20 @@ connections and no data leaves your machine.
 ```
 pocket-ledger/
 ├── app.py                  # Streamlit interface (form, table, delete)
-├── database.py             # All SQLite code (create, insert, read, delete)
+├── desktop_app.py          # Desktop entry point (window + sidebar)
+├── database.py             # All SQLite code (shared by both interfaces)
 ├── requirements.txt        # Python packages to install
 ├── README.md               # This file
 ├── .gitignore              # Files that should not be committed to Git
 ├── data/
 │   └── pocket_ledger.db    # Created automatically; your data lives here
-├── pages/                  # Empty for now; Milestone 2 pages go here
+├── pages/                  # Empty for now; Streamlit Milestone 2 pages
+├── ui/                     # Desktop screens
+│   ├── __init__.py
+│   ├── theme.py            # Colours, fonts and shared widgets
+│   ├── dashboard.py        # Welcome screen
+│   ├── transactions.py     # Add, list and delete transactions
+│   └── settings.py         # Placeholder settings page
 └── utils/
     ├── __init__.py
     └── calculations.py     # Small helpers such as ₹ formatting
@@ -64,6 +76,38 @@ If PowerShell blocks `Activate.ps1`, either run the command shown above with
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
+
+## Run the desktop app
+
+```powershell
+.\.venv\Scripts\python.exe desktop_app.py
+```
+
+A native window opens with a sidebar: Dashboard, Transactions and Settings.
+Close the window (or press `Alt+F4`) to quit.
+
+The desktop app uses the same `data/pocket_ledger.db` file as the Streamlit
+app, so existing transactions appear in both. `database.py` and
+`utils/calculations.py` are shared, which is why the two interfaces stay in
+sync.
+
+### Desktop milestone 1
+
+- Dark, rounded-card layout with sidebar navigation.
+- Dashboard: welcome screen with a shortcut to Transactions.
+- Transactions: add income/expenses, see them in a table, delete with a
+  confirmation dialog.
+- Settings: app information, database location and a preview of future work.
+- Amounts shown in Indian Rupees (₹); the same validation rules apply.
+
+### How the desktop code is organised
+
+- `desktop_app.py` builds the window, the sidebar and page switching.
+- `ui/theme.py` stores the palette, fonts and reusable widgets.
+- `ui/dashboard.py`, `ui/transactions.py` and `ui/settings.py` each build one
+  page. They only call functions in `database.py` — no SQL lives in the UI.
+- Errors from SQLite are caught and shown inside the window instead of
+  crashing the app.
 
 ## How it works
 
@@ -112,8 +156,12 @@ A production app would store paise as whole numbers to avoid rounding quirks.
   `streamlit run app.py --server.port 8502`.
 - **Table looks empty**: data is per database file. Check that the app is
   running from this folder so it uses `data/pocket_ledger.db`.
+- **Desktop window does not open**: install the dependencies again with
+  `.\.venv\Scripts\python.exe -m pip install -r requirements.txt` and run
+  `.\.venv\Scripts\python.exe desktop_app.py` from the project folder.
 
 ## Not included yet
 
 Milestone 2 and later: dashboard totals, monthly reports, filters, editing
-transactions, budgets. The `pages/` and `utils/` folders are ready for them.
+transactions, budgets, and charts in the desktop app (Matplotlib). The `pages/`
+and `ui/` folders are ready for them.
