@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from importers import csv_parser, service
 from ui.models import ImportPreviewModel
-from ui.theme import COLORS, card, field_label, page_header, primary_button
+from ui.theme import BadgeLabel, card, field_label, page_header, primary_button
 from ui.workers import run_database_task
 from utils.calculations import format_inr
 
@@ -85,8 +85,7 @@ class ImportCsvDialog(QDialog):
         layout.setContentsMargins(20, 14, 20, 14)
         layout.setSpacing(6)
         caption = QLabel("STATEMENT FILE")
-        caption.setObjectName("field")
-        caption.setStyleSheet(f"color: {COLORS['accent']};")
+        caption.setObjectName("accent")
         self.file_label = QLabel("No file chosen yet.")
         self.file_label.setObjectName("muted")
         actions = QHBoxLayout()
@@ -134,7 +133,7 @@ class ImportCsvDialog(QDialog):
         top = QHBoxLayout()
         heading = QLabel("Preview")
         heading.setStyleSheet("font-size: 14px; font-weight: 700;")
-        self.counts_label = QLabel("0 rows")
+        self.counts_label = BadgeLabel("0 rows")
         self.counts_label.setObjectName("badge")
         top.addWidget(heading)
         top.addStretch(1)
@@ -312,12 +311,10 @@ class ImportCsvDialog(QDialog):
         )
 
     def _set_status(self, message, kind="info"):
-        colour = {
-            "info": COLORS["muted"],
-            "error": COLORS["danger"],
-        }[kind]
         self.status_label.setText(message)
-        self.status_label.setStyleSheet(f"color: {colour};")
+        self.status_label.setObjectName("statusError" if kind == "error" else "muted")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def closeEvent(self, event):
         callback = self._on_close

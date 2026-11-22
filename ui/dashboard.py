@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ui.theme import COLORS, card, page_header, primary_button
+from ui.theme import NumberBadge, card, page_header, primary_button
 
 
 class DashboardView(QWidget):
@@ -22,8 +22,7 @@ class DashboardView(QWidget):
         hero_layout.setContentsMargins(28, 26, 28, 28)
         hero_layout.setSpacing(6)
         eyebrow = QLabel("WELCOME BACK")
-        eyebrow.setObjectName("field")
-        eyebrow.setStyleSheet(f"color: {COLORS['accent']};")
+        eyebrow.setObjectName("accent")
         headline = QLabel("Your money, kept simple.")
         headline.setStyleSheet("font-size: 27px; font-weight: 700;")
         blurb = QLabel(
@@ -77,13 +76,7 @@ class DashboardView(QWidget):
             start=1,
         ):
             row = QHBoxLayout()
-            bullet = QLabel(str(number))
-            bullet.setFixedSize(22, 22)
-            bullet.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-            bullet.setStyleSheet(
-                f"background: {COLORS['accent_soft']}; color: {COLORS['accent']};"
-                "border-radius: 11px; font-weight: 700;"
-            )
+            bullet = NumberBadge(number)
             description = QLabel(text)
             description.setObjectName("subtitle")
             row.addWidget(bullet)

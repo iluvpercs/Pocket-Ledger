@@ -6,7 +6,16 @@ keeps the import logic reusable without a GUI.
 """
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
+from PySide6.QtGui import QColor
 
+from ui.theme import (
+    HIGHLIGHT,
+    HIGHLIGHT_SOFT,
+    NEGATIVE,
+    NEGATIVE_SOFT,
+    POSITIVE,
+    POSITIVE_SOFT,
+)
 from utils.formatting import (
     format_signed_amount,
     format_transaction_date,
@@ -74,10 +83,7 @@ class TransactionTableModel(QAbstractTableModel):
             return Qt.AlignRight | Qt.AlignVCenter if column == 4 else Qt.AlignLeft | Qt.AlignVCenter
         if role == Qt.ForegroundRole:
             if column in (1, 4):
-                from PySide6.QtGui import QColor
-                from ui.theme import COLORS
-
-                colour = COLORS["success"] if row["transaction_type"] == "income" else COLORS["danger"]
+                colour = POSITIVE if row["transaction_type"] == "income" else NEGATIVE
                 return QColor(colour)
             return None
         if role != Qt.DisplayRole:
@@ -154,6 +160,13 @@ class ImportPreviewModel(QAbstractTableModel):
 
     HEADERS = ("", "DATE", "DESCRIPTION", "CATEGORY", "AMOUNT", "STATUS")
     IncludeRole = Qt.UserRole + 1
+    STATUS_STYLES = {
+        "NEW": (POSITIVE, POSITIVE_SOFT),
+        "WARNING": (HIGHLIGHT, HIGHLIGHT_SOFT),
+        "DUPLICATE": (HIGHLIGHT, HIGHLIGHT_SOFT),
+        "WAS DELETED": (HIGHLIGHT, HIGHLIGHT_SOFT),
+        "ERROR": (NEGATIVE, NEGATIVE_SOFT),
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -199,6 +212,9 @@ class ImportPreviewModel(QAbstractTableModel):
             if role == Qt.CheckStateRole:
                 return Qt.Checked if row.included else Qt.Unchecked
             return None
+        if column == 5 and role in (Qt.ForegroundRole, Qt.BackgroundRole):
+            foreground, background = self.STATUS_STYLES[self.status_text(row)]
+            return QColor(foreground if role == Qt.ForegroundRole else background)
         if role in (Qt.DisplayRole, Qt.EditRole):
             if column == 1:
                 return row.date or ""

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 import database
-from ui.theme import COLORS, card, page_header
+from ui.theme import card, code_panel, page_header
 
 
 class SettingsView(QWidget):
@@ -63,12 +63,7 @@ class SettingsView(QWidget):
         note = QLabel("All data stays in a local SQLite file. Nothing is sent to the internet.")
         note.setObjectName("subtitle")
         note.setWordWrap(True)
-        path = QLabel(str(database.DB_PATH))
-        path.setStyleSheet(
-            f"background: {COLORS['surface_alt']}; border-radius: 8px;"
-            f"color: {COLORS['muted']}; padding: 8px; font-family: Consolas;"
-        )
-        path.setWordWrap(True)
+        path = code_panel(str(database.DB_PATH))
 
         actions = QHBoxLayout()
         self.status_label = QLabel("")

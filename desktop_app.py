@@ -9,7 +9,6 @@ this file only wires screens together.
 
 import sys
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -28,12 +27,13 @@ import database
 from ui.dashboard import DashboardView
 from ui.import_csv import ImportCsvDialog
 from ui.settings import SettingsView
-from ui.theme import COLORS, apply_theme
+from ui.theme import IconBadge, apply_theme
 from ui.transactions import TransactionsView
 
 APP_TITLE = "Pocket Ledger"
 WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 760
+SIDEBAR_WIDTH = 300
 
 PAGES = {
     "dashboard": DashboardView,
@@ -89,22 +89,16 @@ class PocketLedgerApp(QMainWindow):
     def _build_sidebar(self):
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(236)
+        sidebar.setFixedWidth(SIDEBAR_WIDTH)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(20, 24, 14, 22)
+        layout.setContentsMargins(16, 24, 14, 22)
         layout.setSpacing(4)
 
         brand = QWidget()
         brand_layout = QHBoxLayout(brand)
         brand_layout.setContentsMargins(0, 0, 0, 0)
-        badge = QLabel("₹")
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedSize(38, 38)
-        badge.setStyleSheet(
-            f"background: {COLORS['accent']}; color: #FFFFFF;"
-            "border-radius: 11px; font-size: 18px; font-weight: 700;"
-        )
-        brand_layout.addWidget(badge)
+        brand_layout.setSpacing(10)
+        brand_layout.addWidget(IconBadge("₹"))
         names = QVBoxLayout()
         title = QLabel("Pocket Ledger")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
@@ -122,7 +116,7 @@ class PocketLedgerApp(QMainWindow):
 
         group = QButtonGroup(self)
         for key, label in NAV_ITEMS:
-            button = QPushButton(f"  {label}")
+            button = QPushButton(label)
             button.setObjectName("nav")
             button.setCheckable(True)
             button.clicked.connect(lambda checked=False, name=key: self.show_page(name))

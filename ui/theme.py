@@ -1,10 +1,11 @@
-"""Dark theme and small reusable widgets for the PySide6 interface.
+"""Strawberry theme and small reusable widgets for the PySide6 interface.
 
-Every screen pulls its colours and stylesheet from here, so the whole app can
-be restyled in one place. No database or import logic belongs in this file.
+Every screen pulls its colours from the named constants below, so the whole app
+can be restyled in one place. No database or import logic belongs in this file.
 """
 
-from PySide6.QtGui import QPalette
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -12,140 +13,241 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
-# Same palette as the old desktop UI, so the app keeps its look.
+# ------------------------------------------------------------------ palette
+# Named Strawberry palette. These are the single source of truth for colours.
+BACKGROUND = "#202125"
+SIDEBAR = "#282A2F"
+SURFACE = "#2F3137"
+SURFACE_ALT = "#383B42"
+BORDER = "#454950"
+
+PRIMARY = "#F14666"
+SECONDARY = "#EE8980"
+HIGHLIGHT = "#FFCDAA"
+POSITIVE = "#9CB898"
+NEGATIVE = "#F14666"
+
+TEXT = "#F7F3EF"
+MUTED = "#C8BAB2"
+# Dark ink gives 5.0:1 on PRIMARY and 7.0:1 on SECONDARY, so button text
+# passes WCAG AA (white only reaches 3.6:1 on #F14666).
+ON_ACCENT = "#151619"
+
+# Tinted surfaces derived from the palette above.
+PRIMARY_SOFT = "#432D35"
+SECONDARY_SOFT = "#493338"
+HIGHLIGHT_SOFT = "#4A3D33"
+POSITIVE_SOFT = "#2E3B2D"
+NEGATIVE_SOFT = "#43272E"
+
+# Backwards-compatible aliases used by the rest of the UI.
+ACCENT = PRIMARY
+ACCENT_HOVER = SECONDARY
+ACCENT_SOFT = PRIMARY_SOFT
+SUCCESS = POSITIVE
+SUCCESS_SOFT = POSITIVE_SOFT
+DANGER = NEGATIVE
+DANGER_SOLID = NEGATIVE
+DANGER_SOLID_HOVER = SECONDARY
+DANGER_SOFT = NEGATIVE_SOFT
+
 COLORS = {
-    "window": "#0B0E13",
-    "sidebar": "#0E1218",
-    "surface": "#141A22",
-    "surface_alt": "#1A2230",
-    "border": "#232C3A",
-    "text": "#E9EDF5",
-    "muted": "#8A94A6",
-    "accent": "#4C8DFF",
-    "accent_hover": "#3D7BEB",
-    "accent_soft": "#16233B",
-    "success": "#3DDC97",
-    "success_soft": "#10281F",
-    "danger": "#F87171",
-    "danger_solid": "#E5484D",
-    "danger_solid_hover": "#C93C41",
-    "danger_soft": "#2A151A",
+    "window": BACKGROUND,
+    "sidebar": SIDEBAR,
+    "surface": SURFACE,
+    "surface_alt": SURFACE_ALT,
+    "border": BORDER,
+    "text": TEXT,
+    "muted": MUTED,
+    "accent": PRIMARY,
+    "accent_hover": SECONDARY,
+    "accent_soft": PRIMARY_SOFT,
+    "success": POSITIVE,
+    "success_soft": POSITIVE_SOFT,
+    "danger": NEGATIVE,
+    "danger_solid": NEGATIVE,
+    "danger_solid_hover": SECONDARY,
+    "danger_soft": NEGATIVE_SOFT,
+    "highlight": HIGHLIGHT,
+    "highlight_soft": HIGHLIGHT_SOFT,
+    "secondary": SECONDARY,
+    "secondary_soft": SECONDARY_SOFT,
+    "positive": POSITIVE,
+    "negative": NEGATIVE,
+    "on_accent": ON_ACCENT,
 }
 
 FONT_FAMILY = "Segoe UI"
 
 STYLESHEET = f"""
-* {{ font-family: "{FONT_FAMILY}"; font-size: 12px; color: {COLORS['text']}; }}
-QWidget {{ background: {COLORS['window']}; }}
-QFrame#card, QDialog#card {{
-    background: {COLORS['surface']};
-    border: 1px solid {COLORS['border']};
+* {{ font-family: "{FONT_FAMILY}"; font-size: 12px; color: {TEXT}; }}
+QWidget {{ background: {BACKGROUND}; }}
+
+/* Fix the old dark rectangles behind every text label. More specific
+   object-name rules below never set a background on a QLabel. */
+QLabel {{ background: transparent; }}
+QDialog, QMessageBox {{ background: {BACKGROUND}; }}
+
+QFrame#card {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
     border-radius: 14px;
 }}
-QFrame#sidebar {{ background: {COLORS['sidebar']}; border: none; }}
-QLabel#title {{ font-size: 25px; font-weight: 700; }}
-QLabel#subtitle, QLabel#field, QLabel#muted {{ color: {COLORS['muted']}; }}
-QLabel#field {{ font-size: 10px; font-weight: 700; letter-spacing: 1px; }}
-QLabel#badge {{
-    background: {COLORS['surface_alt']}; color: {COLORS['muted']};
-    border-radius: 8px; padding: 3px 9px; font-size: 11px;
+QFrame#sidebar {{ background: {SIDEBAR}; border: none; }}
+
+/* Small coloured chips are QFrames, not QLabels, so the "all labels are
+   transparent" rule stays true everywhere in the main window. */
+QFrame#badge {{
+    background: {PRIMARY_SOFT};
+    border: 1px solid {PRIMARY};
+    border-radius: 9px;
 }}
-QLabel#statusOk {{ color: {COLORS['success']}; }}
-QLabel#statusError {{ color: {COLORS['danger']}; }}
+QFrame#badge QLabel {{ color: {HIGHLIGHT}; font-size: 11px; font-weight: 700; }}
+QFrame#bullet {{ background: {PRIMARY_SOFT}; border-radius: 11px; }}
+QFrame#bullet QLabel {{ color: {HIGHLIGHT}; font-size: 11px; font-weight: 700; }}
+QFrame#brandBadge {{ background: {PRIMARY}; border-radius: 11px; }}
+QFrame#brandBadge QLabel {{ color: {ON_ACCENT}; font-size: 18px; font-weight: 700; }}
+QFrame#code {{
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QFrame#code QLabel {{ color: {MUTED}; font-family: Consolas; font-size: 11px; }}
+
+QLabel#title {{ font-size: 25px; font-weight: 700; }}
+QLabel#subtitle, QLabel#muted {{ color: {MUTED}; }}
+QLabel#field {{ color: {HIGHLIGHT}; font-size: 10px; font-weight: 700; letter-spacing: 1px; }}
+QLabel#accent {{ color: {HIGHLIGHT}; font-weight: 700; }}
+QLabel#statusOk {{ color: {POSITIVE}; }}
+QLabel#statusError {{ color: {NEGATIVE}; font-weight: 700; }}
+
 QLineEdit, QDateEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
-    background: {COLORS['surface_alt']};
-    border: 1px solid {COLORS['border']};
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
     border-radius: 9px;
     padding: 7px 10px;
     min-height: 22px;
-    selection-background-color: {COLORS['accent']};
+    selection-background-color: {PRIMARY};
+    selection-color: {ON_ACCENT};
 }}
-QLineEdit:focus, QDateEdit:focus, QComboBox:focus {{ border: 1px solid {COLORS['accent']}; }}
+QLineEdit:focus, QDateEdit:focus, QComboBox:focus,
+QSpinBox:focus, QDoubleSpinBox:focus {{ border: 1px solid {PRIMARY}; }}
+
 QPushButton {{
-    background: {COLORS['surface_alt']};
-    border: 1px solid {COLORS['border']};
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
     border-radius: 9px;
     padding: 8px 14px;
+    color: {TEXT};
 }}
-QPushButton:hover {{ background: {COLORS['border']}; }}
+QPushButton:hover {{ background: {SECONDARY_SOFT}; color: {HIGHLIGHT}; }}
+QPushButton:focus {{ border: 1px solid {PRIMARY}; }}
 QPushButton#primary {{
-    background: {COLORS['accent']}; border: none; color: #FFFFFF; font-weight: 700;
+    background: {PRIMARY}; border: none; color: {ON_ACCENT}; font-weight: 700;
 }}
-QPushButton#primary:hover {{ background: {COLORS['accent_hover']}; }}
+QPushButton#primary:hover {{ background: {SECONDARY}; color: {ON_ACCENT}; }}
 QPushButton#danger {{
-    background: {COLORS['danger_solid']}; border: none; color: #FFFFFF; font-weight: 700;
+    background: {NEGATIVE}; border: none; color: {ON_ACCENT}; font-weight: 700;
 }}
-QPushButton#danger:hover {{ background: {COLORS['danger_solid_hover']}; }}
-QPushButton#ghost {{ background: transparent; border: none; color: {COLORS['muted']}; }}
-QPushButton#ghost:hover {{ background: {COLORS['surface_alt']}; }}
+QPushButton#danger:hover {{ background: {SECONDARY}; color: {ON_ACCENT}; }}
+QPushButton#ghost {{ background: transparent; border: none; color: {MUTED}; }}
+QPushButton#ghost:hover {{ background: {SURFACE_ALT}; color: {HIGHLIGHT}; }}
 QPushButton#nav {{
-    background: transparent; border: none; color: {COLORS['muted']};
-    text-align: left; padding: 11px 14px; font-size: 12px; border-radius: 10px;
-}}
-QPushButton#nav:hover {{ background: {COLORS['surface_alt']}; }}
-QPushButton#nav:checked {{
-    background: {COLORS['accent_soft']}; color: {COLORS['accent']}; font-weight: 700;
-}}
-QTableView {{
-    background: {COLORS['surface']};
-    alternate-background-color: {COLORS['surface_alt']};
-    border: 1px solid {COLORS['border']};
-    border-radius: 10px;
-    gridline-color: {COLORS['border']};
-    selection-background-color: {COLORS['accent_soft']};
-    selection-color: {COLORS['text']};
-}}
-QHeaderView::section {{
-    background: {COLORS['surface_alt']};
-    color: {COLORS['muted']};
+    background: transparent;
     border: none;
-    border-bottom: 1px solid {COLORS['border']};
+    border-left: 3px solid transparent;
+    color: {MUTED};
+    text-align: left;
+    padding: 11px 14px 11px 18px;
+    font-size: 12px;
+    border-radius: 10px;
+}}
+QPushButton#nav:hover {{ background: {SECONDARY_SOFT}; color: {HIGHLIGHT}; }}
+QPushButton#nav:checked {{
+    background: {PRIMARY_SOFT};
+    color: {HIGHLIGHT};
+    border-left: 3px solid {PRIMARY};
+    font-weight: 700;
+}}
+
+QTableView {{
+    background: {SURFACE};
+    alternate-background-color: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    gridline-color: {BORDER};
+    selection-background-color: {PRIMARY_SOFT};
+    selection-color: {HIGHLIGHT};
+}}
+QTableView::item {{ padding: 4px 6px; }}
+QHeaderView::section {{
+    background: {SURFACE_ALT};
+    color: {MUTED};
+    border: none;
+    border-bottom: 1px solid {BORDER};
     padding: 8px 6px;
     font-size: 10px;
     font-weight: 700;
 }}
+QHeaderView::section:hover {{ color: {HIGHLIGHT}; }}
 QComboBox QAbstractItemView {{
-    background: {COLORS['surface_alt']};
-    selection-background-color: {COLORS['accent']};
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+    selection-background-color: {PRIMARY};
+    selection-color: {ON_ACCENT};
 }}
 QCheckBox {{ spacing: 7px; }}
-QScrollBar:vertical {{
-    background: transparent; width: 10px; margin: 0;
+QCheckBox::indicator {{
+    width: 15px; height: 15px;
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    background: {SURFACE_ALT};
 }}
-QScrollBar::handle:vertical {{ background: {COLORS['border']}; border-radius: 5px; }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QCheckBox::indicator:checked {{ background: {PRIMARY}; border: 1px solid {PRIMARY}; }}
+
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; }}
+QScrollBar::handle:vertical:hover {{ background: {SECONDARY}; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: {BORDER}; border-radius: 5px; }}
+QScrollBar::handle:horizontal:hover {{ background: {SECONDARY}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+
 QToolTip {{
-    background: {COLORS['surface_alt']}; border: 1px solid {COLORS['border']};
+    background: {SURFACE_ALT};
+    border: 1px solid {BORDER};
+    color: {TEXT};
     padding: 5px;
 }}
 """
 
 
 def apply_theme(app):
-    """Set Fusion, a dark palette and the shared stylesheet once at startup."""
+    """Set Fusion, the Strawberry palette and the shared stylesheet once."""
     app.setStyle("Fusion")
     palette = QPalette()
-    palette.setColor(QPalette.Window, _colour("window"))
-    palette.setColor(QPalette.WindowText, _colour("text"))
-    palette.setColor(QPalette.Base, _colour("surface"))
-    palette.setColor(QPalette.AlternateBase, _colour("surface_alt"))
-    palette.setColor(QPalette.Text, _colour("text"))
-    palette.setColor(QPalette.Button, _colour("surface_alt"))
-    palette.setColor(QPalette.ButtonText, _colour("text"))
-    palette.setColor(QPalette.Highlight, _colour("accent"))
-    palette.setColor(QPalette.HighlightedText, _colour("window"))
+    palette.setColor(QPalette.Window, QColor(BACKGROUND))
+    palette.setColor(QPalette.WindowText, QColor(TEXT))
+    palette.setColor(QPalette.Base, QColor(SURFACE))
+    palette.setColor(QPalette.AlternateBase, QColor(SURFACE_ALT))
+    palette.setColor(QPalette.Text, QColor(TEXT))
+    palette.setColor(QPalette.Button, QColor(SURFACE_ALT))
+    palette.setColor(QPalette.ButtonText, QColor(TEXT))
+    palette.setColor(QPalette.Highlight, QColor(PRIMARY))
+    palette.setColor(QPalette.HighlightedText, QColor(ON_ACCENT))
+    palette.setColor(QPalette.Link, QColor(PRIMARY))
+    palette.setColor(QPalette.LinkVisited, QColor(SECONDARY))
     app.setPalette(palette)
     app.setStyleSheet(STYLESHEET)
 
 
 def _colour(name):
-    from PySide6.QtGui import QColor
-
+    """Look up a palette value by its legacy COLORS key."""
     return QColor(COLORS[name])
 
 
@@ -153,6 +255,70 @@ def card(parent=None):
     """A rounded panel used for every section of the interface."""
     frame = QFrame(parent)
     frame.setObjectName("card")
+    return frame
+
+
+class BadgeLabel(QFrame):
+    """A coloured count chip that behaves like a label for callers.
+
+    It is a QFrame so the chip has a background without breaking the global
+    "QLabel { background: transparent; }" fix.
+    """
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self.setObjectName("badge")
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(9, 3, 9, 3)
+        layout.setSpacing(0)
+        self._label = QLabel(text)
+        layout.addWidget(self._label)
+
+    def setText(self, text):
+        self._label.setText(str(text))
+
+    def text(self):
+        return self._label.text()
+
+
+class IconBadge(QFrame):
+    """Small square or circular brand badge with centred text."""
+
+    def __init__(self, text, object_name="brandBadge", size=38, parent=None):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self.setFixedSize(size, size)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+
+
+class NumberBadge(QFrame):
+    """Circular step number used on the dashboard."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.setObjectName("bullet")
+        self.setFixedSize(22, 22)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(str(text))
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+
+
+def code_panel(text, parent=None):
+    """A read-only-looking path/code panel with a transparent text label."""
+    frame = QFrame(parent)
+    frame.setObjectName("code")
+    layout = QHBoxLayout(frame)
+    layout.setContentsMargins(8, 8, 8, 8)
+    label = QLabel(text)
+    label.setWordWrap(True)
+    layout.addWidget(label)
     return frame
 
 
@@ -205,7 +371,12 @@ def ghost_button(text):
 
 
 class ConfirmDialog(QDialog):
-    """Modal yes/no dialog. ``on_confirm`` runs only on an explicit confirm."""
+    """Modal yes/no dialog.
+
+    Constructing the dialog shows it and blocks until the user answers, so a
+    caller only needs to create it. ``on_confirm`` runs only when the confirm
+    button is pressed; cancelling does nothing.
+    """
 
     def __init__(
         self,
@@ -244,6 +415,8 @@ class ConfirmDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(confirm)
         layout.addLayout(buttons)
+
+        self.exec()
 
     def _confirm(self):
         callback = self._on_confirm

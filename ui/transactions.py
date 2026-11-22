@@ -8,7 +8,7 @@ entries. Every database call is handed to ``ui.workers``.
 import sqlite3
 from datetime import date
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (
 import database
 from ui.models import TransactionProxyModel, TransactionTableModel
 from ui.theme import (
-    COLORS,
+    BadgeLabel,
     ConfirmDialog,
     card,
     danger_button,
@@ -35,12 +36,27 @@ from ui.theme import (
     styled_entry,
 )
 from ui.workers import run_database_task
-from utils.formatting import format_inr, format_transaction_date
+from utils.formatting import format_inr
 
 
 def _load_rows():
     """Read rows and detach them from SQLite before crossing threads."""
     return [dict(row) for row in database.get_all_transactions()]
+
+
+def _delete_batch(transaction_ids):
+    """Soft-delete every id in one SQLite transaction.
+
+    ``database.atomic_write()`` shares one connection with every
+    ``delete_transaction()`` call, so all the row updates and sync tombstones
+    commit together or roll back together. This function runs in a worker
+    thread; any exception is reported by ``run_database_task``.
+    """
+    ids = [int(transaction_id) for transaction_id in transaction_ids]
+    with database.atomic_write():
+        return sum(
+            1 for transaction_id in ids if database.delete_transaction(transaction_id)
+        )
 
 
 class EditTransactionDialog(QDialog):
@@ -155,7 +171,7 @@ class TransactionsView(QWidget):
         top = QHBoxLayout()
         heading = QLabel("Saved transactions")
         heading.setStyleSheet("font-size: 14px; font-weight: 700;")
-        self.count_label = QLabel("")
+        self.count_label = BadgeLabel("")
         self.count_label.setObjectName("badge")
         self.filter_entry = styled_entry("Filter date, type, category, description…")
         top.addWidget(heading)
@@ -183,16 +199,23 @@ class TransactionsView(QWidget):
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.doubleClicked.connect(self._on_edit)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.installEventFilter(self)
+        self.table.selectionModel().selectionChanged.connect(self._update_action_state)
         self.filter_entry.textChanged.connect(self.proxy_model.set_filter_text)
         layout.addWidget(self.table, 1)
 
         actions = QHBoxLayout()
-        edit_button = QPushButton("Edit selected")
-        delete_button = danger_button("Delete selected")
-        edit_button.clicked.connect(self._on_edit)
-        delete_button.clicked.connect(self._confirm_delete)
-        actions.addWidget(edit_button)
-        actions.addWidget(delete_button)
+        self.edit_button = QPushButton("Edit selected")
+        self.delete_button = danger_button("Delete selected")
+        self.delete_button.setEnabled(False)
+        self.edit_button.clicked.connect(lambda: self._on_edit())
+        # ``clicked`` carries a checked bool; ignore it so the same zero-argument
+        # handler is used by the button, Delete key and context menu.
+        self.delete_button.clicked.connect(lambda _checked=False: self._confirm_delete())
+        actions.addWidget(self.edit_button)
+        actions.addWidget(self.delete_button)
         actions.addStretch(1)
         layout.addLayout(actions)
         return table_card
@@ -212,7 +235,13 @@ class TransactionsView(QWidget):
         self.source_model.set_rows(rows)
         count = len(rows)
         self.count_label.setText(f"{count} entr{'y' if count == 1 else 'ies'}")
-        if count == 0:
+        deleted = getattr(self, "_pending_deleted_ids", None)
+        if deleted is not None:
+            self._select_first_visible_not(deleted)
+            self._pending_deleted_ids = None
+        else:
+            self._update_action_state()
+        if count == 0 and deleted is None:
             self._set_status("No transactions yet. Add your first one above.", "info")
 
     # -------------------------------------------------------------- actions
@@ -256,6 +285,53 @@ class TransactionsView(QWidget):
             return None
         return self.proxy_model.source_row_dict(index.row())
 
+    def _selected_ids(self):
+        """Integer ids of every selected row, mapped through the proxy model."""
+        ids = []
+        seen = set()
+        for index in self.table.selectionModel().selectedRows(0):
+            source = self.proxy_model.mapToSource(index)
+            if not source.isValid():
+                continue
+            row_id = self.source_model.row_id(source.row())
+            if row_id is not None and row_id not in seen:
+                seen.add(row_id)
+                ids.append(row_id)
+        return ids
+
+    def _update_action_state(self):
+        has_selection = bool(self._selected_ids())
+        self.edit_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+
+    def _select_first_visible_not(self, exclude_ids):
+        """After a batch delete, leave a sensible selection on a remaining row."""
+        selection = self.table.selectionModel()
+        selection.clearSelection()
+        for row in range(self.proxy_model.rowCount()):
+            if self.proxy_model.source_row_id(row) in exclude_ids:
+                continue
+            index = self.proxy_model.index(row, 0)
+            selection.select(index, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            self.table.setCurrentIndex(index)
+            break
+        self._update_action_state()
+
+    def eventFilter(self, watched, event):
+        """Delete/Backspace on the table uses the same handler as the button."""
+        if watched is self.table and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                self._confirm_delete()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _show_context_menu(self, position):
+        menu = QMenu(self.table)
+        action = menu.addAction("Delete selected")
+        action.setEnabled(bool(self._selected_ids()))
+        action.triggered.connect(self._confirm_delete)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
     def _on_edit(self):
         row = self._selected_row()
         if row is None:
@@ -292,39 +368,41 @@ class TransactionsView(QWidget):
         )
 
     def _confirm_delete(self):
-        row = self._selected_row()
-        if row is None:
+        ids = self._selected_ids()
+        if not ids:
             self._set_status("Select a transaction to delete.", "error")
             return
 
-        details = (
-            f"{row['transaction_type'].capitalize()} · "
-            f"{format_inr(row['amount'])} · {row['category']}\n"
-            f"{format_transaction_date(row['transaction_date'])}"
-        )
-        if row["description"]:
-            details += f"\n{row['description']}"
+        count = len(ids)
+        noun = "transaction" if count == 1 else "transactions"
+        title = f"Delete {count} {noun}?"
         ConfirmDialog(
             self,
-            "Delete this transaction?",
-            f"{details}\n\nThis cannot be undone.",
-            on_confirm=lambda: self._delete(row["id"]),
+            title,
+            f"{title}\n\nThis cannot be undone.",
+            on_confirm=lambda: self._delete(ids),
         )
 
-    def _delete(self, transaction_id):
-        def deleted(ok):
+    def _delete(self, transaction_ids):
+        ids = list(transaction_ids)
+
+        def deleted(deleted_count):
+            self._pending_deleted_ids = set(ids)
             self.refresh()
-            self._set_status(
-                "Transaction deleted." if ok else "That transaction was already removed.",
-                "success" if ok else "error",
-            )
+            noun = "transaction" if deleted_count == 1 else "transactions"
+            self._set_status(f"Deleted {deleted_count} {noun}.")
+
+        def failed(message):
+            text = f"Could not delete: {message}"
+            self._show_error(text)
+            self._set_status(text, "error")
 
         run_database_task(
             self,
-            database.delete_transaction,
-            transaction_id,
+            _delete_batch,
+            ids,
             on_success=deleted,
-            on_error=lambda message: self._set_status(f"Could not delete: {message}", "error"),
+            on_error=failed,
         )
 
     # --------------------------------------------------------------- helpers
