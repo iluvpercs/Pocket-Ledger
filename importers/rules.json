@@ -1,0 +1,11 @@
+{
+  "default_category": "Other",
+  "categories": {
+    "Food": ["swiggy", "zomato", "dominos", "restaurant", "cafe", "coffee", "grocery", "supermarket"],
+    "Transport": ["uber", "ola", "petrol", "fuel", "metro", "bus", "taxi", "parking"],
+    "Salary": ["salary", "payroll", "stipend", "reimbursement"],
+    "Shopping": ["amazon", "flipkart", "myntra", "shopping"],
+    "Bills": ["electricity", "water", "internet", "broadband", "mobile", "rent", "insurance"],
+    "Health": ["pharmacy", "hospital", "clinic", "medicine"]
+  }
+}

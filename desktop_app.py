@@ -11,6 +11,7 @@ import customtkinter as ctk
 
 import database
 from ui.dashboard import DashboardView
+from ui.import_csv import ImportCsvDialog
 from ui.settings import SettingsView
 from ui.theme import COLORS, apply_theme, center_window, font
 from ui.transactions import TransactionsView
@@ -29,6 +30,7 @@ PAGES = {
 NAV_ITEMS = (
     ("dashboard", "Dashboard"),
     ("transactions", "Transactions"),
+    ("import", "Import CSV"),
     ("settings", "Settings"),
 )
 
@@ -48,6 +50,7 @@ class PocketLedgerApp(ctk.CTk):
         self.current_page = None
         self.nav_buttons = {}
         self.page_container = None
+        self.import_dialog = None
 
         self.grid_columnconfigure(0, weight=0)  # sidebar keeps its width
         self.grid_columnconfigure(1, weight=1)  # page area grows
@@ -160,6 +163,9 @@ class PocketLedgerApp(ctk.CTk):
 
     def show_page(self, name):
         """Replace the current page and highlight its sidebar button."""
+        if name == "import":  # this entry opens a dialog, not a nav page
+            return self.open_import_dialog()
+
         view_class = PAGES.get(name)
         if view_class is None or self.page_container is None:
             return
@@ -184,6 +190,22 @@ class PocketLedgerApp(ctk.CTk):
         view = view_class(self.page_container, self)
         view.grid(row=0, column=0, sticky="nsew")
         self.current_page = name
+
+    # ------------------------------------------------------------ CSV import
+    def open_import_dialog(self):
+        """Open (or focus) the CSV import dialog from the sidebar."""
+        existing = self.import_dialog
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus_force()
+            return existing
+        self.import_dialog = ImportCsvDialog(
+            self, on_close=self._on_import_dialog_closed
+        )
+        return self.import_dialog
+
+    def _on_import_dialog_closed(self):
+        self.import_dialog = None
 
     # ----------------------------------------------------------- error screen
     def _show_database_error(self, error):
