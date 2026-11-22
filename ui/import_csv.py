@@ -1,19 +1,41 @@
-"""CSV import dialog for the desktop app.
+"""CSV import dialog for the desktop app (PySide6 port).
 
-This file only builds widgets and calls ``importers.service``. Parsing,
-duplicate detection and committing all stay in the importers package, so the
-dialog can be tested and changed without touching the import rules.
+Only widgets live here: parsing, duplicate detection and committing are still
+owned by ``importers.service``. The preview uses a Qt table model, so a large
+statement does not create thousands of widgets.
 """
 
-import sqlite3
 from pathlib import Path
-from tkinter import filedialog
 
-import customtkinter as ctk
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+)
 
 from importers import csv_parser, service
-from ui.theme import COLORS, card, font, page_header, styled_entry
+from ui.models import ImportPreviewModel
+from ui.theme import COLORS, card, field_label, page_header, primary_button
+from ui.workers import run_database_task
 from utils.calculations import format_inr
+
+def _parse_and_preview(path, mapping=None):
+    """File read + duplicate check, always called in a worker thread."""
+    parsed = csv_parser.parse_csv(path, mapping=mapping)
+    if not parsed.ok:
+        raise ValueError(parsed.error or "This file could not be read.")
+    preview = service.build_preview(parsed, source_file=str(path))
+    return parsed, preview
+
 
 FIELD_LABELS = {
     "date": "Date",
@@ -24,46 +46,17 @@ FIELD_LABELS = {
     "balance": "Balance",
     "reference": "Reference",
 }
-
 NONE_OPTION = "— none —"
-WINDOW_WIDTH = 1080
-WINDOW_HEIGHT = 760
-
-ROW_COLUMNS = (
-    ("", 0, 34),
-    ("DATE", 0, 108),
-    ("DESCRIPTION", 1, 220),
-    ("CATEGORY", 0, 128),
-    ("AMOUNT", 0, 110),
-    ("STATUS", 0, 132),
-)
 
 
-def _status_style(status):
-    if status == "duplicate":
-        return "DUPLICATE", COLORS["muted"], COLORS["surface_alt"]
-    if status == "previously_deleted":
-        return "WAS DELETED", COLORS["muted"], COLORS["surface_alt"]
-    if status == "error":
-        return "ERROR", COLORS["danger"], COLORS["danger_soft"]
-    if status == "warning":
-        return "WARNING", COLORS["accent"], COLORS["accent_soft"]
-    return "NEW", COLORS["success"], COLORS["success_soft"]
-
-
-class ImportCsvDialog(ctk.CTkToplevel):
+class ImportCsvDialog(QDialog):
     """Choose a CSV, check the mapping, edit the preview, then import."""
 
     def __init__(self, parent, choose_file=None, on_close=None):
         super().__init__(parent)
-        self.withdraw()  # build everything before showing the window
-
-        self.title("Pocket Ledger · Import CSV")
-        self.configure(fg_color=COLORS["window"])
-        self.transient(parent.winfo_toplevel())
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(900, 620)
-        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.setWindowTitle("Pocket Ledger · Import CSV")
+        self.resize(1080, 760)
+        self.setMinimumSize(900, 620)
 
         self._choose_file = choose_file or self._ask_file
         self._on_close = on_close
@@ -71,266 +64,137 @@ class ImportCsvDialog(ctk.CTkToplevel):
         self.parse_result = None
         self.preview = None
         self.mapping_vars = {}
-        self.row_widgets = []
 
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
         self._build()
-
-        self.update_idletasks()
-        owner = parent.winfo_toplevel()
-        x = owner.winfo_rootx() + max(0, (owner.winfo_width() - WINDOW_WIDTH) // 2)
-        y = owner.winfo_rooty() + max(0, (owner.winfo_height() - WINDOW_HEIGHT) // 3)
-        self.geometry(f"+{max(0, x)}+{max(0, y)}")
-        self.deiconify()
-        self.lift()
-        self.focus_force()
+        self._set_status("Choose a CSV statement to begin.")
 
     # ------------------------------------------------------------------ build
     def _build(self):
-        body = ctk.CTkScrollableFrame(
-            self,
-            fg_color="transparent",
-            corner_radius=0,
-            scrollbar_fg_color="transparent",
-            scrollbar_button_color=COLORS["border"],
-            scrollbar_button_hover_color="#344054",
-        )
-        body.grid(row=0, column=0, sticky="nsew", padx=18, pady=16)
-        body.grid_columnconfigure(0, weight=1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        layout.addWidget(page_header("Import CSV", "Review every row before anything is saved."))
+        layout.addWidget(self._build_file_card())
+        layout.addWidget(self._build_mapping_card())
+        layout.addWidget(self._build_preview_card(), 1)
+        layout.addLayout(self._build_footer())
 
-        page_header(
-            body, "Import CSV", "Review every row before anything is saved."
-        ).grid(row=0, column=0, sticky="ew", pady=(0, 12))
-
-        self._build_file_card(body).grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        self._build_mapping_card(body).grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        self._build_preview_card(body).grid(row=3, column=0, sticky="nsew")
-        self._build_footer(body).grid(row=4, column=0, sticky="ew", pady=(12, 0))
-
-        body.grid_rowconfigure(3, weight=1)
-
-    def _build_file_card(self, parent):
-        panel = card(parent)
-        panel.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            panel,
-            text="STATEMENT FILE",
-            font=font(10, "bold"),
-            text_color=COLORS["accent"],
-            anchor="w",
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(14, 4))
-
-        self.file_label = ctk.CTkLabel(
-            panel,
-            text="No file chosen yet.",
-            font=font(11),
-            text_color=COLORS["muted"],
-            anchor="w",
-        )
-        self.file_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20)
-
-        ctk.CTkButton(
-            panel,
-            text="Choose CSV…",
-            width=132,
-            height=34,
-            corner_radius=9,
-            fg_color=COLORS["surface_alt"],
-            hover_color=COLORS["border"],
-            text_color=COLORS["text"],
-            font=font(11, "bold"),
-            command=self._choose_csv,
-        ).grid(row=2, column=0, sticky="w", padx=20, pady=(10, 14))
-
-        self.detected_label = ctk.CTkLabel(
-            panel,
-            text="",
-            font=font(10),
-            text_color=COLORS["muted"],
-            anchor="w",
-        )
-        self.detected_label.grid(row=2, column=1, sticky="e", padx=(8, 20), pady=(10, 14))
+    def _build_file_card(self):
+        panel = card()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(6)
+        caption = QLabel("STATEMENT FILE")
+        caption.setObjectName("field")
+        caption.setStyleSheet(f"color: {COLORS['accent']};")
+        self.file_label = QLabel("No file chosen yet.")
+        self.file_label.setObjectName("muted")
+        actions = QHBoxLayout()
+        choose = QPushButton("Choose CSV…")
+        choose.clicked.connect(self._choose_csv)
+        self.detected_label = QLabel("")
+        self.detected_label.setObjectName("muted")
+        actions.addWidget(choose)
+        actions.addStretch(1)
+        actions.addWidget(self.detected_label)
+        layout.addWidget(caption)
+        layout.addWidget(self.file_label)
+        layout.addLayout(actions)
         return panel
 
-    def _build_mapping_card(self, parent):
-        panel = card(parent)
-        panel.grid_columnconfigure(0, weight=1)
+    def _build_mapping_card(self):
+        panel = card()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(8)
+        top = QHBoxLayout()
+        heading = QLabel("Column mapping")
+        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        remap = QPushButton("Re-read with these columns")
+        remap.clicked.connect(self._remap)
+        top.addWidget(heading)
+        top.addStretch(1)
+        top.addWidget(remap)
+        layout.addLayout(top)
 
-        top = ctk.CTkFrame(panel, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
-        top.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            top,
-            text="Column mapping",
-            font=font(14, "bold"),
-            text_color=COLORS["text"],
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-
-        ctk.CTkButton(
-            top,
-            text="Re-read with these columns",
-            width=196,
-            height=30,
-            corner_radius=9,
-            fg_color=COLORS["accent_soft"],
-            hover_color=COLORS["border"],
-            text_color=COLORS["accent"],
-            font=font(10, "bold"),
-            command=self._remap,
-        ).grid(row=0, column=1, sticky="e")
-
-        self.mapping_grid = ctk.CTkFrame(panel, fg_color="transparent")
-        self.mapping_grid.grid(row=1, column=0, sticky="ew", padx=20, pady=(2, 16))
-        self.mapping_grid.grid_columnconfigure(0, weight=1)
-        self.mapping_grid.grid_columnconfigure(2, weight=1)
-
-        self.mapping_hint = ctk.CTkLabel(
-            self.mapping_grid,
-            text="Choose a statement to auto-detect the columns.",
-            font=font(11),
-            text_color=COLORS["muted"],
-            anchor="w",
-        )
-        self.mapping_hint.grid(row=0, column=0, columnspan=4, sticky="w")
+        self.mapping_grid = QFormLayout()
+        self.mapping_grid.setHorizontalSpacing(14)
+        self.mapping_grid.setVerticalSpacing(4)
+        self.mapping_hint = QLabel("Choose a statement to auto-detect the columns.")
+        self.mapping_hint.setObjectName("muted")
+        layout.addLayout(self.mapping_grid)
+        layout.addWidget(self.mapping_hint)
         return panel
 
-    def _build_preview_card(self, parent):
-        panel = card(parent)
-        panel.grid_columnconfigure(0, weight=1)
-        panel.grid_rowconfigure(3, weight=1)
+    def _build_preview_card(self):
+        panel = card()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(8)
+        top = QHBoxLayout()
+        heading = QLabel("Preview")
+        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        self.counts_label = QLabel("0 rows")
+        self.counts_label.setObjectName("badge")
+        top.addWidget(heading)
+        top.addStretch(1)
+        top.addWidget(self.counts_label)
+        layout.addLayout(top)
 
-        top = ctk.CTkFrame(panel, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 8))
-        top.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            top,
-            text="Preview",
-            font=font(14, "bold"),
-            text_color=COLORS["text"],
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-
-        self.counts_label = ctk.CTkLabel(
-            top,
-            text="0 rows",
-            font=font(10, "bold"),
-            text_color=COLORS["muted"],
-            anchor="e",
-        )
-        self.counts_label.grid(row=0, column=1, sticky="e")
-
-        header_row = ctk.CTkFrame(panel, fg_color="transparent")
-        header_row.grid(row=1, column=0, sticky="ew", padx=(20, 36))
-        for index, (title, weight, minimum) in enumerate(ROW_COLUMNS):
-            header_row.grid_columnconfigure(index, weight=weight, minsize=minimum)
-            ctk.CTkLabel(
-                header_row,
-                text=title,
-                font=font(9, "bold"),
-                text_color=COLORS["muted"],
-                anchor="w",
-            ).grid(row=0, column=index, sticky="ew", padx=(0, 6))
-
-        ctk.CTkFrame(panel, fg_color=COLORS["border"], height=1).grid(
-            row=2, column=0, sticky="ew", padx=20
-        )
-
-        rows_frame = ctk.CTkScrollableFrame(
-            panel,
-            fg_color="transparent",
-            corner_radius=0,
-            height=230,
-            scrollbar_fg_color="transparent",
-            scrollbar_button_color=COLORS["border"],
-            scrollbar_button_hover_color="#344054",
-        )
-        rows_frame.grid(row=3, column=0, sticky="nsew", padx=(20, 12), pady=(6, 4))
-        self.rows_container = ctk.CTkFrame(rows_frame, fg_color="transparent")
-        self.rows_container.pack(fill="x")
-        self.rows_container.grid_columnconfigure(0, weight=1)
-
-        self.preview_hint = ctk.CTkLabel(
-            panel,
-            text="Load a statement to see its rows here.",
-            font=font(11),
-            text_color=COLORS["muted"],
-            anchor="w",
-        )
-        self.preview_hint.grid(row=3, column=0, sticky="nw", padx=24, pady=24)
+        self.preview_model = ImportPreviewModel()
+        self.table = QTableView()
+        self.table.setModel(self.preview_model)
+        self.table.setSelectionBehavior(QTableView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().hide()
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(2, 240)
+        self.table.setColumnWidth(3, 130)
+        self.preview_model.dataChanged.connect(self._refresh_footer)
+        layout.addWidget(self.table, 1)
         return panel
 
-    def _build_footer(self, parent):
-        panel = ctk.CTkFrame(parent, fg_color="transparent")
-        panel.grid_columnconfigure(0, weight=1)
-
-        self.status_label = ctk.CTkLabel(
-            panel,
-            text="",
-            font=font(11),
-            text_color=COLORS["muted"],
-            anchor="w",
-            justify="left",
-            wraplength=620,
-        )
-        self.status_label.grid(row=0, column=0, sticky="w")
-
-        self.totals_label = ctk.CTkLabel(
-            panel,
-            text="",
-            font=font(10),
-            text_color=COLORS["muted"],
-            anchor="w",
-        )
-        self.totals_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        ctk.CTkButton(
-            panel,
-            text="Cancel",
-            width=100,
-            height=38,
-            corner_radius=10,
-            fg_color=COLORS["surface_alt"],
-            hover_color=COLORS["border"],
-            text_color=COLORS["text"],
-            font=font(11),
-            command=self.close,
-        ).grid(row=0, column=1, sticky="e", padx=(8, 0))
-
-        self.import_button = ctk.CTkButton(
-            panel,
-            text="Import 0 transactions",
-            width=190,
-            height=38,
-            corner_radius=10,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            text_color="#FFFFFF",
-            font=font(11, "bold"),
-            command=self._confirm,
-        )
-        self.import_button.grid(row=1, column=1, sticky="e", padx=(8, 0), pady=(4, 0))
+    def _build_footer(self):
+        panel = QVBoxLayout()
+        panel.setSpacing(3)
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("muted")
+        self.status_label.setWordWrap(True)
+        self.totals_label = QLabel("")
+        self.totals_label.setObjectName("muted")
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.close)
+        self.import_button = primary_button("Import 0 transactions")
+        self.import_button.clicked.connect(self._confirm)
+        actions.addWidget(cancel)
+        actions.addWidget(self.import_button)
+        panel.addWidget(self.status_label)
+        panel.addWidget(self.totals_label)
+        panel.addLayout(actions)
         return panel
 
     # ------------------------------------------------------------------ files
-    @staticmethod
-    def _ask_file(parent=None):
-        return filedialog.askopenfilename(
-            title="Choose a CSV statement",
-            filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")],
-            parent=parent,
+    def _ask_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose a CSV statement",
+            "",
+            "CSV files (*.csv *.txt);;All files (*.*)",
         )
+        return path
 
     def _choose_csv(self):
         chosen = self._choose_file()
         if not chosen:
             return
         self.source_path = Path(chosen)
-        self.file_label.configure(text=str(self.source_path))
+        self.file_label.setText(str(self.source_path))
         self._load(reuse_mapping=False)
 
     def _remap(self):
@@ -342,33 +206,36 @@ class ImportCsvDialog(ctk.CTkToplevel):
     def _load(self, reuse_mapping=False):
         self._set_status("Reading statement…")
         override = self._selected_mapping() if reuse_mapping else None
-        try:
-            parsed = csv_parser.parse_csv(self.source_path, mapping=override)
-            if not parsed.ok:
-                self._set_status(parsed.error or "This file could not be read.", "error")
-                return
-            self.preview = service.build_preview(
-                parsed, source_file=str(self.source_path)
-            )
-        except (OSError, ValueError, sqlite3.Error) as error:
-            self._set_status(str(error), "error")
-            return
-
-        self.parse_result = parsed
-        self._render_mapping()
-        self._render_rows()
-        self._set_status(
-            f"Detected {csv_parser.date_format_label(parsed.date_format)} dates and "
-            f"'{parsed.delimiter.strip() or 'tab'}' separator. Review the rows below."
+        run_database_task(
+            self,
+            _parse_and_preview,
+            self.source_path,
+            override,
+            on_success=self._apply_preview,
+            on_error=lambda message: self._set_status(
+                f"Could not read statement: {message}", "error"
+            ),
         )
+
+    def _apply_preview(self, result):
+        parsed, preview = result
+        self.parse_result = parsed
+        self.preview = preview
+        self.preview_model.set_preview(preview)
+        self._render_mapping()
+        detected = csv_parser.date_format_label(parsed.date_format)
+        separator = parsed.delimiter.strip() or "tab"
+        self.detected_label.setText(f"{detected} · '{separator}' separator")
+        self._refresh_footer()
+        self._set_status("Review the rows below, then click Import.")
 
     def _selected_mapping(self):
         if not self.parse_result:
             return None
         header = self.parse_result.header
         override = {}
-        for field_name, variable in self.mapping_vars.items():
-            selected = variable.get()
+        for field_name, combo in self.mapping_vars.items():
+            selected = combo.currentText()
             if selected == NONE_OPTION:
                 override[field_name] = None
             elif selected in header:
@@ -376,243 +243,84 @@ class ImportCsvDialog(ctk.CTkToplevel):
         return override
 
     def _render_mapping(self):
-        for widget in self.mapping_grid.winfo_children():
-            widget.destroy()
+        while self.mapping_grid.rowCount():
+            self.mapping_grid.removeRow(0)
         self.mapping_vars.clear()
 
         header = self.parse_result.header
         options = [NONE_OPTION] + header
         for index, field_name in enumerate(csv_parser.FIELDS):
-            row = index // 2
-            column = (index % 2) * 2
-            ctk.CTkLabel(
-                self.mapping_grid,
-                text=FIELD_LABELS[field_name],
-                font=font(10),
-                text_color=COLORS["muted"],
-                anchor="w",
-            ).grid(row=row, column=column, sticky="w", padx=(0, 8), pady=3)
-
+            combo = QComboBox()
+            combo.addItems(options)
             detected = self.preview.mapping.get(field_name)
-            initial = header[detected] if detected is not None and detected < len(header) else NONE_OPTION
-            variable = ctk.StringVar(value=initial)
-            self.mapping_vars[field_name] = variable
-            ctk.CTkComboBox(
-                self.mapping_grid,
-                values=options,
-                variable=variable,
-                state="readonly",
-                width=190,
-                height=30,
-                font=font(10),
-                dropdown_font=font(10),
-            ).grid(row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=3)
+            if detected is not None and detected < len(header):
+                combo.setCurrentText(header[detected])
+            else:
+                combo.setCurrentText(NONE_OPTION)
+            self.mapping_vars[field_name] = combo
+            self.mapping_grid.addRow(field_label(FIELD_LABELS[field_name]), combo)
 
     # ------------------------------------------------------------------ preview
-    def _render_rows(self):
-        for widget in self.rows_container.winfo_children():
-            widget.destroy()
-        self.row_widgets.clear()
-
-        if not self.preview.rows:
-            self.preview_hint.configure(text="No transaction rows were found in this CSV.")
-            self.preview_hint.grid()
-        else:
-            self.preview_hint.grid_remove()
-
-        for index, row in enumerate(self.preview.rows):
-            widgets = self._build_row(index, row)
-            self.row_widgets.append(widgets)
-
-        self._refresh_footer()
-
-    def _build_row(self, index, row):
-        frame = ctk.CTkFrame(self.rows_container, fg_color="transparent")
-        frame.pack(fill="x", pady=2)
-        for column, (_, weight, minimum) in enumerate(ROW_COLUMNS):
-            frame.grid_columnconfigure(column, weight=weight, minsize=minimum)
-
-        include = ctk.BooleanVar(value=row.included)
-        checkbox = ctk.CTkCheckBox(
-            frame,
-            text="",
-            variable=include,
-            width=26,
-            height=26,
-            corner_radius=6,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            border_color=COLORS["border"],
-            command=lambda i=index, v=include: self._on_include(i, v),
-        )
-        checkbox.grid(row=0, column=0, sticky="w")
-        if not row.importable:
-            checkbox.configure(state="disabled")
-
-        entries = []
-        for column, value, width in (
-            (1, row.date or "", 100),
-            (2, row.description, 210),
-            (3, row.category, 120),
-            (4, str(row.amount) if row.amount is not None else "", 100),
-        ):
-            entry = styled_entry(frame, height=30)
-            entry.configure(width=width)
-            entry.insert(0, value)
-            entry.grid(row=0, column=column, sticky="ew", padx=(0, 6))
-            entry.bind("<FocusOut>", lambda event, i=index: self._on_edit(i))
-            entries.append(entry)
-
-        label_text, colour, background = _status_style(row.duplicate_status)
-        if row.status in ("error", "warning"):
-            label_text, colour, background = _status_style(row.status)
-        badge = ctk.CTkLabel(
-            frame,
-            text=label_text,
-            font=font(9, "bold"),
-            text_color=colour,
-            fg_color=background,
-            corner_radius=8,
-            width=90,
-            height=22,
-        )
-        badge.grid(row=0, column=5, sticky="w")
-
-        return {"checkbox": checkbox, "include": include, "entries": entries, "badge": badge}
-
-    def _on_include(self, index, variable):
-        if self.preview is None:
-            return
-        service.apply_edits(self.preview, index, included=variable.get())
-        self._refresh_footer()
-
-    def _on_edit(self, index):
-        if self.preview is None or index >= len(self.row_widgets):
-            return
-        widgets = self.row_widgets[index]
-        date_entry, description_entry, category_entry, amount_entry = widgets["entries"]
-        row = service.apply_edits(
-            self.preview,
-            index,
-            date=date_entry.get(),
-            description=description_entry.get(),
-            category=category_entry.get(),
-            amount=amount_entry.get(),
-        )
-        label_text, colour, background = _status_style(row.duplicate_status)
-        if row.status in ("error", "warning"):
-            label_text, colour, background = _status_style(row.status)
-        widgets["badge"].configure(
-            text=label_text, text_color=colour, fg_color=background
-        )
-        if row.status == "error":
-            widgets["checkbox"].configure(state="disabled")
-        self._refresh_footer()
-
     def _refresh_footer(self):
         if self.preview is None:
             return
         counts = service.preview_counts(self.preview)
         totals = service.preview_totals(self.preview)
-        self.counts_label.configure(
-            text=(
-                f"{counts['total']} rows · {counts['included']} included · "
-                f"{counts['duplicates']} duplicates · {counts['errors']} errors"
-            )
+        self.counts_label.setText(
+            f"{counts['total']} rows · {counts['included']} included · "
+            f"{counts['duplicates']} duplicates · {counts['errors']} errors"
         )
-        self.totals_label.configure(
-            text=(
-                f"Included: {format_inr(totals['income'])} in · "
-                f"{format_inr(totals['expense'])} out · net {format_inr(totals['net'])}"
-            )
+        self.totals_label.setText(
+            f"Included: {format_inr(totals['income'])} in · "
+            f"{format_inr(totals['expense'])} out · net {format_inr(totals['net'])}"
         )
-        self.import_button.configure(
-            text=f"Import {counts['included']} transaction"
-            + ("s" if counts["included"] != 1 else "")
-        )
+        label = f"Import {counts['included']} transaction" + ("s" if counts["included"] != 1 else "")
+        self.import_button.setText(label)
 
     # ----------------------------------------------------------------- actions
     def _confirm(self):
         if self.preview is None:
             self._set_status("Choose a CSV file first.", "error")
             return
-        for index in range(len(self.preview.rows)):
-            self._on_edit(index)
-        try:
-            summary = service.commit_preview(self.preview)
-        except (ValueError, sqlite3.Error) as error:
-            self._set_status(f"Import failed; nothing was saved. {error}", "error")
-            return
-        self._show_summary(summary)
+        self.import_button.setEnabled(False)
+        self._set_status("Importing…")
+
+        def done(summary):
+            self._show_summary(summary)
+            self.close()
+
+        run_database_task(
+            self,
+            service.commit_preview,
+            self.preview,
+            on_success=done,
+            on_error=lambda message: (
+                self._set_status(f"Import failed; nothing was saved. {message}", "error"),
+                self.import_button.setEnabled(True),
+            ),
+        )
 
     def _show_summary(self, summary):
-        result = ctk.CTkToplevel(self)
-        result.withdraw()
-        result.title("Pocket Ledger · Import complete")
-        result.configure(fg_color=COLORS["window"])
-        result.resizable(False, False)
-        result.transient(self)
-        result.protocol("WM_DELETE_WINDOW", result.destroy)
-
-        panel = card(result)
-        panel.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
-        result.grid_columnconfigure(0, weight=1)
-        result.grid_rowconfigure(0, weight=1)
-        panel.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            panel,
-            text="Import complete",
-            font=font(17, "bold"),
-            text_color=COLORS["text"],
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w", padx=24, pady=(20, 10))
-
-        lines = [
-            f"Imported: {summary.imported}",
-            f"Skipped duplicates: {summary.skipped_duplicates}",
-            f"Excluded: {summary.excluded}",
+        QMessageBox.information(
+            self,
+            "Pocket Ledger · Import complete",
+            "Import complete\n\n"
+            f"Imported: {summary.imported}\n"
+            f"Skipped duplicates: {summary.skipped_duplicates}\n"
+            f"Excluded: {summary.excluded}\n"
             f"Errors: {summary.errors}",
-        ]
-        for offset, line in enumerate(lines, start=1):
-            ctk.CTkLabel(
-                panel,
-                text=line,
-                font=font(12),
-                text_color=COLORS["muted"] if offset > 1 else COLORS["success"],
-                anchor="w",
-            ).grid(row=offset, column=0, sticky="w", padx=24, pady=2)
-
-        ctk.CTkButton(
-            panel,
-            text="Done",
-            width=110,
-            height=36,
-            corner_radius=10,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            text_color="#FFFFFF",
-            font=font(11, "bold"),
-            command=lambda: (result.destroy(), self.close()),
-        ).grid(row=len(lines) + 1, column=0, sticky="e", padx=24, pady=(18, 20))
-
-        result.update_idletasks()
-        result.geometry("+%d+%d" % (self.winfo_rootx() + 180, self.winfo_rooty() + 160))
-        result.deiconify()
-        result.lift()
-        result.focus_force()
+        )
 
     def _set_status(self, message, kind="info"):
         colour = {
             "info": COLORS["muted"],
             "error": COLORS["danger"],
-            "success": COLORS["success"],
         }[kind]
-        self.status_label.configure(text=message, text_color=colour)
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"color: {colour};")
 
-    def close(self):
-        """Close the dialog and let the main window forget about it."""
+    def closeEvent(self, event):
         callback = self._on_close
-        self.destroy()
+        super().closeEvent(event)
         if callback is not None:
             callback()

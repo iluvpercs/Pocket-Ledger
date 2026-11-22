@@ -8,11 +8,15 @@ Two rules keep the real financial data safe:
 """
 
 import hashlib
+import os
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
+
+# Qt must see this before PySide6 is imported by any test module.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -44,6 +48,15 @@ def protect_live_database():
     assert after == before, (
         "A test modified the live database. Tests must only use temporary copies."
     )
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """One offscreen QApplication for all Qt smoke tests."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 @pytest.fixture

@@ -1,13 +1,13 @@
 """Database helpers for Pocket Ledger.
 
 All the code that talks to SQLite lives in this file (plus the schema
-migrations in ``migrations.py``). Keeping it separate from ``app.py`` and the
-desktop screens means the interface code can focus on the screen, while this
-file focuses on storing and reading data.
+migrations in ``migrations.py``). Keeping it separate from the Qt screens means
+the interface code can focus on the screen, while this file focuses on storing
+and reading data.
 
-The public functions are shared by the Streamlit app and the CustomTkinter
-app. Their names and arguments are unchanged from earlier milestones, so both
-interfaces keep working.
+The public functions are used by the desktop app and the importer service.
+Their names and arguments are unchanged from earlier milestones, so existing
+callers keep working.
 
 Behind the scenes, every transaction now also has:
 
@@ -287,8 +287,8 @@ def add_transaction(
 def get_all_transactions():
     """Return every live transaction, newest date first.
 
-    Deleted rows are hidden here, so the existing Streamlit and desktop
-    screens behave exactly as before. The row still exists in the table as a
+    Deleted rows are hidden here, so the desktop screens behave exactly as
+    before. The row still exists in the table as a
     "tombstone" so the deletion can be synchronised later.
     """
     connection = get_connection()
