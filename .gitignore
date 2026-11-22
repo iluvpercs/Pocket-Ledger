@@ -30,3 +30,7 @@ key.properties
 .idea/
 .DS_Store
 Thumbs.db
+
+# Real bank statements
+*.pdf
+tests/fixtures/real_*
