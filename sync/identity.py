@@ -12,6 +12,14 @@ import uuid
 # Used when the operating system does not give us a computer name.
 DEFAULT_DEVICE_NAME = "Windows Desktop"
 
+# The default INR account must have the same UUID on every device. Deriving it
+# from a fixed name means two devices that migrate independently create the
+# same account instead of two look-alike accounts that later collide in sync.
+DEFAULT_ACCOUNT_UUID = str(
+    uuid.uuid5(uuid.NAMESPACE_URL, "pocket-ledger:account:default-inr")
+)
+DEFAULT_ACCOUNT_NAME = "Default INR account"
+
 
 def get_meta(connection, key, default=None):
     """Read one value from app_meta, or return ``default`` when it is missing."""

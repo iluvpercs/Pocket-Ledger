@@ -17,6 +17,9 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from utils.currencies import DEFAULT_CURRENCY_CODE, DEFAULT_CURRENCY_PRECISION
+from utils.money import to_decimal
+
 # Canonical field names used by auto-detection and by the UI mapping controls.
 FIELDS = ("date", "description", "amount", "debit", "credit", "balance", "reference")
 
@@ -88,6 +91,9 @@ class ParsedRow:
     reference: str | None = None
     category: str = ""
     account_label: str | None = None
+    account_uuid: str | None = None
+    currency_code: str = DEFAULT_CURRENCY_CODE
+    currency_precision: int = DEFAULT_CURRENCY_PRECISION
     status: str = "ok"  # ok / warning / error
     reason: str = ""
     import_hash: str | None = None
@@ -311,16 +317,19 @@ def parse_date(value, date_format):
     return datetime.strptime(text, date_format).date().isoformat()
 
 
-def parse_amount(value):
+def parse_amount(value, precision=DEFAULT_CURRENCY_PRECISION):
     """Parse money with Decimal, returning a signed value (negative = expense).
 
     Handles Indian grouping (1,23,456.78), currency marks, parentheses,
     ``Dr``/``Cr`` suffixes and blank debit/credit cells. Never uses float.
+    ``precision`` is the selected account's ISO 4217 minor-unit precision, so
+    JPY statements are not rounded to two decimals and KWD keeps three.
     """
+    precision = int(precision)
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, Decimal):
-        return value.quantize(Decimal("0.01"))
+        return to_decimal(value, precision=precision, strict=False)
 
     text = str(value).strip()
     negative = False
@@ -356,7 +365,7 @@ def parse_amount(value):
         negative = False
     if negative:
         amount = -amount
-    return amount.quantize(Decimal("0.01"))
+    return to_decimal(amount, precision=precision, strict=False)
 
 
 def _cell(cells, index):
@@ -373,13 +382,20 @@ def is_summary_row(cells):
     return bool(SUMMARY_RE.match(filled[0]))
 
 
-def parse_csv(path, mapping=None, date_format=None):
+def parse_csv(
+    path,
+    mapping=None,
+    date_format=None,
+    precision=DEFAULT_CURRENCY_PRECISION,
+):
     """Parse ``path`` into a :class:`ParseResult`.
 
-    ``mapping`` can override any detected column, and ``date_format`` can
-    override the detected strptime code. File-level problems are returned in
-    ``result.error`` so the UI can show them without a traceback.
+    ``mapping`` can override any detected column, ``date_format`` can override
+    the detected strptime code, and ``precision`` is the destination account's
+    minor-unit precision. File-level problems are returned in ``result.error``
+    so the UI can show them without a traceback.
     """
+    precision = int(precision)
     path = Path(path)
     result = ParseResult(source_file=str(path))
     try:
@@ -428,14 +444,15 @@ def parse_csv(path, mapping=None, date_format=None):
             continue
 
         row = ParsedRow(row_number=row_number, raw=raw)
+        row.currency_precision = precision
         try:
             row.date = parse_date(raw.get("date"), result.date_format)
             row.description = raw.get("description", "")
             row.reference = raw.get("reference") or None
 
-            debit = parse_amount(raw.get("debit"))
-            credit = parse_amount(raw.get("credit"))
-            amount = parse_amount(raw.get("amount"))
+            debit = parse_amount(raw.get("debit"), precision=precision)
+            credit = parse_amount(raw.get("credit"), precision=precision)
+            amount = parse_amount(raw.get("amount"), precision=precision)
 
             # Many banks write 0.00 in the inactive column instead of leaving
             # it blank; that is not a "both columns filled" conflict.
@@ -463,7 +480,9 @@ def parse_csv(path, mapping=None, date_format=None):
 
             if result.mapping.get("balance") is not None:
                 try:
-                    row.balance = parse_amount(raw.get("balance"))
+                    row.balance = parse_amount(
+                        raw.get("balance"), precision=precision
+                    )
                 except ValueError:
                     row.status = "warning"
                     row.reason = "Balance cell could not be read."

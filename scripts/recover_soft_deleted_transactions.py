@@ -138,6 +138,13 @@ def _table_columns(connection, table):
 
 def _validate_schema(connection):
     version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if version >= 4:
+        raise RecoveryValidationError(
+            f"This database is schema version {version}. The soft-delete "
+            "recovery script is frozen at schema 3 and refuses to run on "
+            "schema 4 or later. Use a separate v3 copy if recovery is still "
+            "required."
+        )
     if version != REQUIRED_SCHEMA_VERSION:
         raise RecoveryValidationError(
             f"Expected schema version {REQUIRED_SCHEMA_VERSION}, found {version}. "

@@ -43,7 +43,7 @@ def test_migration_adds_columns_tables_and_indexes(legacy_database):
     expected_columns = {
         "id",
         "transaction_type",
-        "amount",
+        "amount_minor",
         "category",
         "description",
         "transaction_date",
@@ -55,16 +55,19 @@ def test_migration_adds_columns_tables_and_indexes(legacy_database):
         "origin_device_id",
         "last_modified_by",
         "sync_state",
+        "account_uuid",
         "import_hash",
         "external_ref",
         "import_batch_id",
         "account_label",
     }
     assert expected_columns <= columns
+    assert "amount" not in columns
 
     tables = table_names(legacy_database)
     assert {
         "transactions",
+        "accounts",
         "app_meta",
         "devices",
         "sync_changes",
@@ -74,7 +77,14 @@ def test_migration_adds_columns_tables_and_indexes(legacy_database):
     } <= tables
 
     indexes = index_names(legacy_database)
-    assert {"idx_tx_date", "idx_tx_updated", "idx_tx_import_hash"} <= indexes
+    assert {
+        "idx_tx_date",
+        "idx_tx_updated",
+        "idx_tx_account_date",
+        "idx_tx_account_import_hash",
+        "idx_accounts_one_default",
+    } <= indexes
+    assert "idx_tx_import_hash" not in indexes
 
 
 def test_existing_rows_get_unique_uuids_and_valid_timestamps(legacy_database):
@@ -113,14 +123,25 @@ def test_migration_seeds_one_change_log_entry_per_row(legacy_database):
         legacy_database, "SELECT * FROM sync_changes ORDER BY seq"
     )
     rows = fetch_all(legacy_database, "SELECT * FROM transactions ORDER BY id")
+    transaction_changes = [
+        change for change in changes if change["entity_type"] == "transaction"
+    ]
+    account_changes = [
+        change for change in changes if change["entity_type"] == "account"
+    ]
 
-    assert len(changes) == len(rows) == 5
-    assert [change["seq"] for change in changes] == [1, 2, 3, 4, 5]
-    assert all(change["operation"] == "insert" for change in changes)
-    assert [change["entity_uuid"] for change in changes] == [
+    assert len(transaction_changes) == len(rows) == 5
+    assert [change["seq"] for change in transaction_changes] == [1, 2, 3, 4, 5]
+    assert all(change["operation"] == "insert" for change in transaction_changes)
+    assert [change["entity_uuid"] for change in transaction_changes] == [
         row["uuid"] for row in rows
     ]
-    assert all(change["new_revision"] == 1 for change in changes)
+    assert all(change["new_revision"] == 1 for change in transaction_changes)
+
+    assert len(account_changes) == 1
+    assert account_changes[0]["operation"] == "insert"
+    assert account_changes[0]["payload_version"] == 2
+    assert account_changes[0]["entity_uuid"] == rows[0]["account_uuid"]
 
 
 def test_running_migrations_twice_changes_nothing(legacy_database):

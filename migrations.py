@@ -7,6 +7,7 @@ Pocket Ledger uses it like a page number in a book:
 * version 1 - "this is a Pocket Ledger database" (baseline marker)
 * version 2 - UUIDs, timestamps, soft deletes and the sync change log
 * version 3 - import metadata for future bank-statement importing
+* version 4 - accounts, integer minor-unit money and versioned sync payloads
 
 ``initialize_database()`` calls :func:`migrate` on every start. If the database
 is already current, the only work is one cheap ``PRAGMA`` read.
@@ -20,11 +21,22 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from sync.identity import get_or_create_device_id
-from sync.store import append_change, transaction_payload, utc_now_ms
+from sync.identity import (
+    DEFAULT_ACCOUNT_NAME,
+    DEFAULT_ACCOUNT_UUID,
+    get_or_create_device_id,
+)
+from sync.store import (
+    account_payload,
+    append_change,
+    transaction_payload_v1,
+    utc_now_ms,
+)
+from utils.currencies import DEFAULT_CURRENCY_CODE, DEFAULT_CURRENCY_PRECISION
+from utils.money import MoneyError, minor_to_decimal, parse_to_minor, to_decimal
 
 # Increase this number when a new migration step is added.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 BACKUP_FOLDER_NAME = "backups"
 
@@ -107,6 +119,56 @@ CREATE TABLE IF NOT EXISTS import_batches (
     imported_count INTEGER NOT NULL DEFAULT 0,
     skipped_count  INTEGER NOT NULL DEFAULT 0,
     device_id      TEXT
+);
+"""
+
+CREATE_ACCOUNTS_SQL = """
+CREATE TABLE IF NOT EXISTS accounts (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid               TEXT    NOT NULL UNIQUE,
+    name               TEXT    NOT NULL,
+    currency_code      TEXT    NOT NULL,
+    currency_precision INTEGER NOT NULL
+                       CHECK (currency_precision IN (0, 2, 3)),
+    is_default         INTEGER NOT NULL DEFAULT 0
+                       CHECK (is_default IN (0, 1)),
+    created_at_ms      INTEGER NOT NULL,
+    updated_at_ms      INTEGER NOT NULL,
+    deleted_at_ms      INTEGER,
+    revision           INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    origin_device_id   TEXT    NOT NULL,
+    last_modified_by   TEXT    NOT NULL,
+    sync_state         TEXT    NOT NULL DEFAULT 'pending'
+                       CHECK (sync_state IN ('pending', 'synced', 'conflict'))
+);
+"""
+
+# Version 4 replaces the REAL amount with integer minor units and links every
+# transaction to an account. The original columns and sync metadata survive.
+CREATE_TRANSACTIONS_V4_SQL = """
+CREATE TABLE transactions_v4 (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_type TEXT    NOT NULL CHECK (transaction_type IN ('income', 'expense')),
+    amount_minor     INTEGER NOT NULL CHECK (amount_minor > 0),
+    category         TEXT    NOT NULL,
+    description      TEXT,
+    transaction_date TEXT    NOT NULL,
+
+    uuid              TEXT    NOT NULL UNIQUE,
+    created_at_ms     INTEGER NOT NULL,
+    updated_at_ms     INTEGER NOT NULL,
+    deleted_at_ms     INTEGER,
+    revision          INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    origin_device_id  TEXT    NOT NULL,
+    last_modified_by  TEXT    NOT NULL,
+    sync_state        TEXT    NOT NULL DEFAULT 'pending'
+                      CHECK (sync_state IN ('pending', 'synced', 'conflict')),
+
+    account_uuid      TEXT    NOT NULL REFERENCES accounts(uuid),
+    import_hash       TEXT,
+    external_ref      TEXT,
+    import_batch_id   TEXT,
+    account_label     TEXT
 );
 """
 
@@ -301,7 +363,7 @@ def _migrate_to_v2(connection):
             connection,
             entity_uuid=row["uuid"],
             operation="insert",
-            payload=transaction_payload(row),
+            payload=transaction_payload_v1(row),
             origin_device_id=device_id,
             base_revision=None,
             new_revision=row["revision"],
@@ -328,11 +390,363 @@ def _migrate_to_v3(connection):
     )
 
 
+def _seed_default_account(connection, device_id, timestamp_ms):
+    """Create the deterministic INR account once and return its row."""
+    existing = connection.execute(
+        "SELECT * FROM accounts WHERE uuid = ?",
+        (DEFAULT_ACCOUNT_UUID,),
+    ).fetchone()
+    if existing is not None:
+        return existing
+
+    connection.execute(
+        """
+        INSERT INTO accounts
+            (uuid, name, currency_code, currency_precision, is_default,
+             created_at_ms, updated_at_ms, deleted_at_ms, revision,
+             origin_device_id, last_modified_by, sync_state)
+        VALUES (?, ?, ?, ?, 1, ?, ?, NULL, 1, ?, ?, 'pending')
+        """,
+        (
+            DEFAULT_ACCOUNT_UUID,
+            DEFAULT_ACCOUNT_NAME,
+            DEFAULT_CURRENCY_CODE,
+            DEFAULT_CURRENCY_PRECISION,
+            timestamp_ms,
+            timestamp_ms,
+            device_id,
+            device_id,
+        ),
+    )
+    return connection.execute(
+        "SELECT * FROM accounts WHERE uuid = ?",
+        (DEFAULT_ACCOUNT_UUID,),
+    ).fetchone()
+
+
+def _build_v4_manifest(rows):
+    """Convert every legacy amount to minor units, or report all bad ids.
+
+    ``Decimal(str(amount))`` avoids making decisions from the binary float
+    representation. ``ROUND_HALF_UP`` matches the importer's existing
+    behaviour. A row is rejected when the value is non-positive, overflows a
+    signed 64-bit integer, or does not round-trip exactly at two decimals.
+    """
+    manifest = []
+    errors = []
+
+    for row in rows:
+        row_id = row["id"]
+        row_uuid = row["uuid"]
+        try:
+            expected = to_decimal(row["amount"], 2, strict=False)
+            if expected <= 0:
+                raise MoneyError("amount is not positive")
+            minor = parse_to_minor(row["amount"], 2, strict=False)
+            if minor <= 0:
+                raise MoneyError("amount is not positive after conversion")
+            if minor_to_decimal(minor, 2) != expected:
+                raise MoneyError(
+                    f"round-trip mismatch: {expected} != "
+                    f"{minor_to_decimal(minor, 2)}"
+                )
+        except (MoneyError, ArithmeticError, TypeError, ValueError) as error:
+            errors.append((row_id, row_uuid, str(error)))
+            continue
+
+        manifest.append(
+            {
+                "id": int(row_id),
+                "uuid": str(row_uuid),
+                "amount_minor": int(minor),
+            }
+        )
+
+    if errors:
+        details = ", ".join(
+            f"id={row_id} uuid={row_uuid} ({reason})"
+            for row_id, row_uuid, reason in errors
+        )
+        raise RuntimeError(
+            "Migration to schema 4 aborted; offending transaction ids: "
+            + details
+        )
+
+    return manifest
+
+
+def _verify_v4_rows(connection, table, original_rows, manifest, account_uuid):
+    """Check count, sum, and the full per-row id/uuid/minor manifest."""
+    rows = [
+        dict(row)
+        for row in connection.execute(
+            f"SELECT * FROM {table} ORDER BY id"
+        )
+    ]
+    if len(rows) != len(manifest):
+        raise RuntimeError(
+            f"Migration copied {len(rows)} rows, expected {len(manifest)}."
+        )
+
+    by_id = {row["id"]: row for row in rows}
+    if len(by_id) != len(rows):
+        raise RuntimeError("Migration produced duplicate transaction ids.")
+
+    expected_sum = sum(item["amount_minor"] for item in manifest)
+    actual_sum = sum(int(row["amount_minor"]) for row in rows)
+    if actual_sum != expected_sum:
+        raise RuntimeError(
+            f"Migration SUM(amount_minor) is {actual_sum}, expected {expected_sum}."
+        )
+
+    distinct_uuids = {row["uuid"] for row in rows}
+    if len(distinct_uuids) != len(rows):
+        raise RuntimeError("Migration produced duplicate transaction UUIDs.")
+
+    unchanged = (
+        "transaction_type",
+        "category",
+        "description",
+        "transaction_date",
+        "uuid",
+        "created_at_ms",
+        "updated_at_ms",
+        "deleted_at_ms",
+        "revision",
+        "origin_device_id",
+        "last_modified_by",
+        "sync_state",
+        "import_hash",
+        "external_ref",
+        "import_batch_id",
+        "account_label",
+    )
+
+    for item in manifest:
+        row = by_id.get(item["id"])
+        if row is None:
+            raise RuntimeError(
+                f"Migration lost transaction id {item['id']}."
+            )
+        if row["uuid"] != item["uuid"]:
+            raise RuntimeError(
+                f"Migration changed UUID for id {item['id']}: "
+                f"{item['uuid']} -> {row['uuid']}."
+            )
+        if int(row["amount_minor"]) != item["amount_minor"]:
+            raise RuntimeError(
+                f"Migration wrote the wrong minor amount for id {item['id']}."
+            )
+        if row["account_uuid"] != account_uuid:
+            raise RuntimeError(
+                f"Migration wrote the wrong account for id {item['id']}."
+            )
+
+    for original in original_rows:
+        migrated = by_id.get(original["id"])
+        if migrated is None:
+            raise RuntimeError(
+                f"Migration lost transaction id {original['id']}."
+            )
+        for column in unchanged:
+            if migrated[column] != original[column]:
+                raise RuntimeError(
+                    f"Migration changed {column} for id {original['id']}."
+                )
+
+
+def _migrate_to_v4(connection):
+    """Accounts plus integer minor units, rebuilt in one transaction.
+
+    The caller's transaction wraps this whole function. Any exception rolls
+    every DDL and data statement back, leaving the database at schema 3.
+    """
+    columns = _column_names(connection, "transactions")
+    if (
+        "amount" not in columns
+        and "amount_minor" in columns
+        and "account_uuid" in columns
+    ):
+        # A previous run already rebuilt the table but did not record the
+        # version (for example a hand-edited database). Finish the additive
+        # pieces idempotently instead of rebuilding twice.
+        device_id = get_or_create_device_id(connection)
+        timestamp_ms = utc_now_ms()
+        connection.execute(CREATE_ACCOUNTS_SQL)
+        _seed_default_account(connection, device_id, timestamp_ms)
+        if "payload_version" not in _column_names(connection, "sync_changes"):
+            connection.execute(
+                "ALTER TABLE sync_changes "
+                "ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 1"
+            )
+        return
+
+    device_id = get_or_create_device_id(connection)
+    timestamp_ms = utc_now_ms()
+
+    connection.execute(CREATE_ACCOUNTS_SQL)
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_one_default
+        ON accounts(is_default)
+        WHERE is_default = 1 AND deleted_at_ms IS NULL
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_accounts_live
+        ON accounts(deleted_at_ms, name)
+        """
+    )
+    account = _seed_default_account(connection, device_id, timestamp_ms)
+
+    if "account_uuid" not in columns:
+        connection.execute("ALTER TABLE transactions ADD COLUMN account_uuid TEXT")
+    if "amount_minor" not in columns:
+        connection.execute("ALTER TABLE transactions ADD COLUMN amount_minor INTEGER")
+
+    original_rows = [
+        dict(row)
+        for row in connection.execute(
+            "SELECT * FROM transactions ORDER BY id"
+        )
+    ]
+    manifest = _build_v4_manifest(original_rows)
+
+    for item in manifest:
+        cursor = connection.execute(
+            """
+            UPDATE transactions
+               SET account_uuid = ?, amount_minor = ?
+             WHERE id = ?
+            """,
+            (DEFAULT_ACCOUNT_UUID, item["amount_minor"], item["id"]),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(
+                f"Backfill for transaction id {item['id']} touched "
+                f"{cursor.rowcount} rows."
+            )
+
+    _verify_v4_rows(
+        connection,
+        "transactions",
+        original_rows,
+        manifest,
+        DEFAULT_ACCOUNT_UUID,
+    )
+
+    connection.execute("DROP TABLE IF EXISTS transactions_v4")
+    connection.execute(CREATE_TRANSACTIONS_V4_SQL)
+    for original in original_rows:
+        minor = next(
+            item["amount_minor"] for item in manifest if item["id"] == original["id"]
+        )
+        connection.execute(
+            """
+            INSERT INTO transactions_v4
+                (id, transaction_type, amount_minor, category, description,
+                 transaction_date, uuid, created_at_ms, updated_at_ms,
+                 deleted_at_ms, revision, origin_device_id, last_modified_by,
+                 sync_state, account_uuid, import_hash, external_ref,
+                 import_batch_id, account_label)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                original["id"],
+                original["transaction_type"],
+                minor,
+                original["category"],
+                original["description"],
+                original["transaction_date"],
+                original["uuid"],
+                original["created_at_ms"],
+                original["updated_at_ms"],
+                original["deleted_at_ms"],
+                original["revision"],
+                original["origin_device_id"],
+                original["last_modified_by"],
+                original["sync_state"],
+                DEFAULT_ACCOUNT_UUID,
+                original["import_hash"],
+                original["external_ref"],
+                original["import_batch_id"],
+                original["account_label"],
+            ),
+        )
+
+    _verify_v4_rows(
+        connection,
+        "transactions_v4",
+        original_rows,
+        manifest,
+        DEFAULT_ACCOUNT_UUID,
+    )
+
+    connection.execute("DROP TABLE transactions")
+    connection.execute("ALTER TABLE transactions_v4 RENAME TO transactions")
+
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tx_date "
+        "ON transactions(transaction_date DESC, id DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tx_updated ON transactions(updated_at_ms)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tx_account_date "
+        "ON transactions(account_uuid, transaction_date DESC, id DESC)"
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_account_import_hash
+        ON transactions(account_uuid, import_hash)
+        WHERE import_hash IS NOT NULL AND deleted_at_ms IS NULL
+        """
+    )
+
+    if "payload_version" not in _column_names(connection, "sync_changes"):
+        connection.execute(
+            "ALTER TABLE sync_changes "
+            "ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 1"
+        )
+
+    # append_change may have cached the old column set while seeding v2.
+    try:
+        del connection._pocket_ledger_sync_columns
+    except AttributeError:
+        pass
+
+    existing_event = connection.execute(
+        """
+        SELECT 1 FROM sync_changes
+        WHERE entity_type = 'account' AND entity_uuid = ?
+          AND operation = 'insert'
+        LIMIT 1
+        """,
+        (DEFAULT_ACCOUNT_UUID,),
+    ).fetchone()
+    if existing_event is None:
+        append_change(
+            connection,
+            entity_uuid=DEFAULT_ACCOUNT_UUID,
+            operation="insert",
+            payload=account_payload(account),
+            origin_device_id=device_id,
+            base_revision=None,
+            new_revision=1,
+            entity_type="account",
+            recorded_at_ms=timestamp_ms,
+            payload_version=2,
+        )
+
+
 # version number -> function that performs that step
 MIGRATIONS = (
     (1, _migrate_to_v1),
     (2, _migrate_to_v2),
     (3, _migrate_to_v3),
+    (4, _migrate_to_v4),
 )
 
 

@@ -267,6 +267,21 @@ def test_successful_recovery_with_prepared_copy_delete_order(tmp_path):
     assert [event["seq"] for event in events_after] == list(range(1, 16))
 
 
+def test_refuses_schema_v4_or_later(tmp_path):
+    source = _build_source(tmp_path / "source.db")
+    with sqlite3.connect(source) as connection:
+        connection.execute("PRAGMA user_version = 4")
+
+    with pytest.raises(
+        recovery.RecoveryValidationError, match="schema 4 or later"
+    ):
+        recovery.recover_soft_deleted_transactions(
+            source,
+            confirm_recovery=True,
+            working_copy=tmp_path / "working.db",
+        )
+
+
 def test_refuses_canonical_live_database(tmp_path):
     working_copy = tmp_path / "should-not-exist.db"
 

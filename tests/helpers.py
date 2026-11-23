@@ -4,7 +4,9 @@ import sqlite3
 from pathlib import Path
 
 import database
+import migrations
 from migrations import CREATE_TRANSACTIONS_V1_SQL
+from utils.money import parse_to_minor
 
 
 def require_safe_writable_path(path):
@@ -68,6 +70,27 @@ def make_legacy_database(path, rows=SAMPLE_LEGACY_ROWS):
     return path
 
 
+def make_v3_database(path, rows=SAMPLE_LEGACY_ROWS):
+    """Create a schema-3 database with the supplied legacy rows.
+
+    This deliberately stops before the schema-4 migration so tests can migrate
+    a realistic v3 file (including awkward float amounts) on a temp copy.
+    """
+    path = Path(path)
+    path.unlink(missing_ok=True)  # start from the supplied rows, not a fixture
+    path = make_legacy_database(path, rows)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        migrations._migrate_to_v2(connection)
+        migrations._migrate_to_v3(connection)
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+    finally:
+        connection.close()
+    return path
+
+
 def fetch_all(path, sql, parameters=()):
     """Run a query and return plain dictionaries."""
     require_safe_writable_path(path)
@@ -114,16 +137,38 @@ def table_columns(path, table="transactions"):
 
 
 def legacy_snapshot(path):
-    """The original five columns plus version and table shape."""
-    return {
-        "rows": fetch_all(
+    """The original columns plus version and table shape.
+
+    Before schema 4 the stored value is ``amount``; afterwards it is
+    ``amount_minor``. The snapshot normalises both to ``amount_minor`` so
+    before/after migration comparisons stay meaningful.
+    """
+    columns = table_columns(path)
+    if "amount_minor" in columns:
+        rows = fetch_all(
             path,
             """
-            SELECT id, transaction_type, amount, category, description, transaction_date
+            SELECT id, transaction_type, amount_minor, category, description,
+                   transaction_date
             FROM transactions ORDER BY id
             """,
-        ),
-        "columns": table_columns(path),
+        )
+    else:
+        rows = fetch_all(
+            path,
+            """
+            SELECT id, transaction_type, amount, category, description,
+                   transaction_date
+            FROM transactions ORDER BY id
+            """,
+        )
+        for row in rows:
+            row["amount_minor"] = parse_to_minor(
+                row.pop("amount"), precision=2, strict=False
+            )
+    return {
+        "rows": rows,
+        "columns": columns,
         "user_version": schema_version(path),
     }
 
@@ -132,6 +177,7 @@ def full_snapshot(path):
     """Everything a migration could change, for double-run comparisons."""
     return {
         "transactions": fetch_all(path, "SELECT * FROM transactions ORDER BY id"),
+        "accounts": fetch_all(path, "SELECT * FROM accounts ORDER BY id"),
         "changes": fetch_all(path, "SELECT * FROM sync_changes ORDER BY seq"),
         "meta": fetch_all(path, "SELECT * FROM app_meta ORDER BY key"),
         "user_version": schema_version(path),

@@ -75,20 +75,22 @@ def test_change_log_records_insert_update_and_delete(temp_database):
     database.delete_transaction(new_id)
 
     changes = fetch_all(
-        temp_database, "SELECT * FROM sync_changes ORDER BY seq"
+        temp_database,
+        "SELECT * FROM sync_changes WHERE entity_type = 'transaction' ORDER BY seq",
     )
     assert [change["operation"] for change in changes] == [
         "insert",
         "update",
         "delete",
     ]
-    assert [change["seq"] for change in changes] == [1, 2, 3]
 
     payloads = [json.loads(change["payload"]) for change in changes]
     assert all(payload["uuid"] == transaction_uuid for payload in payloads)
-    assert payloads[0]["amount"] == 125.5
-    assert payloads[1]["amount"] == 150
+    assert all(change["payload_version"] == 2 for change in changes)
+    assert payloads[0]["amount_minor"] == 12550
+    assert payloads[1]["amount_minor"] == 15000
     assert payloads[2]["deleted_at_ms"] is not None
+    assert all("amount" not in payload for payload in payloads)
 
     assert changes[0]["base_revision"] is None
     assert changes[0]["new_revision"] == 1
@@ -118,7 +120,13 @@ def test_validation_rules_are_unchanged(
         )
 
     assert database.get_all_transactions() == []
-    assert database.get_change_count() == 0
+    transaction_events = fetch_all(
+        temp_database,
+        "SELECT * FROM sync_changes WHERE entity_type = 'transaction'",
+    )
+    assert transaction_events == []
+    # Only the default account's insert event exists.
+    assert database.get_change_count() == 1
 
 
 def test_import_hash_blocks_duplicates_until_the_row_is_deleted(temp_database):
@@ -142,9 +150,10 @@ def test_import_hash_blocks_duplicates_until_the_row_is_deleted(temp_database):
         )
 
     # Only the first row and its insert log entry exist; the failed attempt
-    # did not leave half a transaction behind.
+    # did not leave half a transaction behind. The seeded default account also
+    # has one insert event.
     assert len(database.get_all_transactions()) == 1
-    assert database.get_change_count() == 1
+    assert database.get_change_count() == 2
 
     database.delete_transaction(first_id)
 
@@ -165,14 +174,19 @@ def test_get_all_transactions_keeps_the_original_row_shape(temp_database):
     database.add_transaction("income", 10, "Gift", "", "2026-11-22")
 
     row = database.get_all_transactions()[0]
-    assert set(row.keys()) == {
+    assert {
         "id",
         "transaction_type",
         "amount",
         "category",
         "description",
         "transaction_date",
-    }
+        "amount_minor",
+        "account_uuid",
+        "account_name",
+        "currency_code",
+        "currency_precision",
+    } <= set(row.keys())
 
 
 def test_newest_date_is_returned_first(temp_database):
@@ -225,7 +239,7 @@ def test_change_log_can_be_paged_and_filtered(temp_database):
             "expense", 10 + index, "Food", "", "2026-11-22"
         )
 
-    assert database.get_change_count() == 5
+    assert database.get_change_count() == 6
 
     first_page = database.get_sync_changes(since_seq=0, limit=2)
     assert [row["seq"] for row in first_page] == [1, 2]

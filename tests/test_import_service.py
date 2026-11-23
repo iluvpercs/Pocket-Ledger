@@ -42,11 +42,12 @@ def test_identical_same_day_rows_are_kept_with_distinct_hashes(temp_database, tm
 
     rows = fetch_all(
         temp_database,
-        "SELECT transaction_type, amount, import_hash FROM transactions ORDER BY id",
+        "SELECT transaction_type, amount_minor, import_hash "
+        "FROM transactions ORDER BY id",
     )
     assert len(rows) == 2
     assert all(row["transaction_type"] == "expense" for row in rows)
-    assert all(row["amount"] == 50.0 for row in rows)
+    assert all(row["amount_minor"] == 5000 for row in rows)
     assert rows[0]["import_hash"] != rows[1]["import_hash"]
 
 
@@ -147,9 +148,13 @@ def test_commit_rolls_back_everything_when_a_write_fails(temp_database, tmp_path
 
     assert len(calls) == 2
     assert database.get_all_transactions() == []
-    assert database.get_change_count() == 0
+    assert fetch_all(
+        temp_database,
+        "SELECT * FROM sync_changes WHERE entity_type = 'transaction'",
+    ) == []
     assert fetch_all(temp_database, "SELECT * FROM import_batches") == []
-    assert fetch_all(temp_database, "SELECT * FROM sync_changes") == []
+    # Only the seeded default-account insert event remains.
+    assert database.get_change_count() == 1
 
 
 def test_commit_writes_change_log_uuids_and_batch_metadata(temp_database, tmp_path):
@@ -178,11 +183,17 @@ def test_commit_writes_change_log_uuids_and_batch_metadata(temp_database, tmp_pa
         assert row["import_batch_id"] == preview.batch_id
         assert row["import_hash"]
 
-    changes = fetch_all(temp_database, "SELECT * FROM sync_changes ORDER BY seq")
+    changes = fetch_all(
+        temp_database,
+        "SELECT * FROM sync_changes WHERE entity_type = 'transaction' ORDER BY seq",
+    )
     assert [change["operation"] for change in changes] == ["insert", "insert"]
     payloads = [json.loads(change["payload"]) for change in changes]
     assert all(payload["import_hash"] for payload in payloads)
     assert all(payload["import_batch_id"] == preview.batch_id for payload in payloads)
+    assert all(change["payload_version"] == 2 for change in changes)
+    assert all("amount" not in payload for payload in payloads)
+    assert all(payload["account_uuid"] == preview.account_uuid for payload in payloads)
 
     batch = fetch_one(
         temp_database, "SELECT * FROM import_batches WHERE batch_id = ?",

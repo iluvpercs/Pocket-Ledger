@@ -43,6 +43,9 @@ class ImportPreview:
     batch_id: str
     rules: dict
     mapping: dict
+    account_uuid: str = ""
+    currency_code: str = ""
+    currency_precision: int = 2
 
     @property
     def default_category(self):
@@ -89,23 +92,75 @@ def categorize(description, rules):
 
 
 # --------------------------------------------------------------------- preview
+def _resolve_account(account_uuid=None):
+    """Return the selected account, or the live default account."""
+    if account_uuid:
+        account = database.get_account(account_uuid)
+        if account is None:
+            raise ValueError(f"Account not found: {account_uuid}")
+        return account
+    account = database.get_default_account()
+    if account is None:
+        raise ValueError(
+            "No default account exists. Create an account before importing."
+        )
+    return account
+
+
+def _apply_account_to_rows(rows, account):
+    precision = int(account["currency_precision"])
+    for row in rows:
+        row.account_uuid = account["uuid"]
+        row.currency_code = account["currency_code"]
+        row.currency_precision = precision
+        if row.amount is not None:
+            row.amount = csv_parser.parse_amount(row.amount, precision=precision)
+        if row.balance is not None:
+            row.balance = csv_parser.parse_amount(row.balance, precision=precision)
+
+
 def _classify(preview):
     """Refresh duplicate badges using a short-lived database connection."""
     connection = database.get_connection()
     try:
-        return dedupe.classify_rows(preview.rows, connection)
+        return dedupe.classify_rows(
+            preview.rows, connection, account_uuid=preview.account_uuid
+        )
     finally:
         if not database.in_write_transaction():
             connection.close()
 
 
-def build_preview(parsed, source_file=None, rules=None, mapping=None):
-    """Turn a ParseResult into an editable preview with hashes and badges."""
+def build_preview(
+    parsed,
+    source_file=None,
+    rules=None,
+    mapping=None,
+    account_uuid=None,
+):
+    """Turn a ParseResult into an editable preview with hashes and badges.
+
+    ``account_uuid`` selects the destination account. When omitted, the live
+    default account is used. The account's currency precision is applied to
+    every parsed amount before hashes are built.
+    """
+    # Report a failed parse before touching the database, so a missing or
+    # broken file never depends on an initialized database.
+    if not isinstance(parsed, (str, Path)) and not parsed.ok:
+        raise ValueError(parsed.error or "This CSV file could not be read.")
+
+    account = _resolve_account(account_uuid)
     if isinstance(parsed, (str, Path)):
-        parsed = csv_parser.parse_csv(parsed, mapping=mapping)
+        parsed = csv_parser.parse_csv(
+            parsed,
+            mapping=mapping,
+            precision=int(account["currency_precision"]),
+        )
+
     if not parsed.ok:
         raise ValueError(parsed.error or "This CSV file could not be read.")
 
+    _apply_account_to_rows(parsed.rows, account)
     rules = rules if rules is not None else load_rules()
     effective_mapping = mapping or parsed.mapping
     dedupe.assign_hashes(parsed.rows)
@@ -117,6 +172,9 @@ def build_preview(parsed, source_file=None, rules=None, mapping=None):
         batch_id=str(uuid.uuid4()),
         rules=rules,
         mapping=effective_mapping,
+        account_uuid=account["uuid"],
+        currency_code=account["currency_code"],
+        currency_precision=int(account["currency_precision"]),
     )
     _classify(preview)
 
@@ -154,7 +212,9 @@ def apply_edits(preview, index, **changes):
         row.description = str(changes["description"] or "").strip()
     if "amount" in changes:
         try:
-            amount = csv_parser.parse_amount(changes["amount"])
+            amount = csv_parser.parse_amount(
+                changes["amount"], precision=preview.currency_precision
+            )
             if amount is None:
                 raise ValueError("Amount is missing.")
             if amount == 0:
@@ -185,7 +245,10 @@ def apply_edits(preview, index, **changes):
             connection = database.get_connection()
             try:
                 row.occurrence_override = dedupe.reserve_free_occurrence(
-                    row, preview.rows, connection
+                    row,
+                    preview.rows,
+                    connection,
+                    account_uuid=preview.account_uuid,
                 )
             finally:
                 if not database.in_write_transaction():
@@ -272,7 +335,11 @@ def commit_preview(preview):
                 continue
 
             # Recheck inside the write transaction: the preview may be stale.
-            state = dedupe.read_duplicate_state(connection, row.import_hash)
+            state = dedupe.read_duplicate_state(
+                connection,
+                row.import_hash,
+                account_uuid=preview.account_uuid,
+            )
             if state == "duplicate":
                 summary.skipped_duplicates += 1
                 continue
@@ -288,6 +355,7 @@ def commit_preview(preview):
                     external_ref=row.reference,
                     import_batch_id=preview.batch_id,
                     account_label=row.account_label,
+                    account_uuid=preview.account_uuid,
                 )
             except ValueError as error:
                 if "duplicate" in str(error).lower():
@@ -307,7 +375,18 @@ def commit_preview(preview):
     return summary
 
 
-def import_csv_file(path, mapping=None, rules=None, source_file=None):
+def import_csv_file(
+    path,
+    mapping=None,
+    rules=None,
+    source_file=None,
+    account_uuid=None,
+):
     """Convenience helper: parse and build a preview without any UI."""
-    parsed = csv_parser.parse_csv(path, mapping=mapping)
-    return build_preview(parsed, source_file=source_file, rules=rules, mapping=mapping)
+    return build_preview(
+        path,
+        source_file=source_file,
+        rules=rules,
+        mapping=mapping,
+        account_uuid=account_uuid,
+    )
