@@ -125,6 +125,10 @@ class PocketLedgerApp(QMainWindow):
             layout.addWidget(button)
 
         layout.addStretch(1)
+        if database.is_development_database():
+            dev_badge = QLabel("DEV DB")
+            dev_badge.setObjectName("devBadge")
+            layout.addWidget(dev_badge)
         footer = QLabel("Local data only\nDesktop · v0.3")
         footer.setObjectName("muted")
         layout.addWidget(footer)

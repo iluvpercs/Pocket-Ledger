@@ -19,6 +19,7 @@ Behind the scenes, every transaction now also has:
 """
 
 import contextvars
+import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -35,10 +36,85 @@ from sync.store import (
     utc_now_ms,
 )
 
-# The database file lives next to this file, inside the "data" folder.
-# Path(__file__).parent is the folder that contains database.py.
-DATA_DIR = Path(__file__).parent / "data"
-DB_PATH = DATA_DIR / "pocket_ledger.db"
+DB_PATH_ENV_VAR = "POCKET_LEDGER_DB"
+TEST_MODE_ENV_VAR = "POCKET_LEDGER_TEST_MODE"
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+LIVE_DATA_DIR = PROJECT_ROOT / "data"
+LIVE_DB_PATH = LIVE_DATA_DIR / "pocket_ledger.db"
+
+
+class DatabaseSafetyError(RuntimeError):
+    """Raised when code tries to use the live database in a protected context."""
+
+
+class DatabaseConfigurationError(DatabaseSafetyError):
+    """Raised when ``POCKET_LEDGER_DB`` is set to an unusable value."""
+
+
+def _canonical_path(path):
+    """Return a canonical absolute path for reliable live-path comparison."""
+    return Path(os.path.normcase(str(Path(path).expanduser().resolve())))
+
+
+def _read_environment_db_path():
+    """Read and validate the optional database override."""
+    raw = os.environ.get(DB_PATH_ENV_VAR)
+    if raw is None:
+        return None
+
+    text = raw.strip()
+    if not text:
+        raise DatabaseConfigurationError(
+            f"{DB_PATH_ENV_VAR} is set but empty. Set it to a SQLite file path "
+            "or remove the variable to use the production database."
+        )
+
+    path = _canonical_path(text)
+    if path.exists() and path.is_dir():
+        raise DatabaseConfigurationError(
+            f"{DB_PATH_ENV_VAR} points to a directory, not a database file: {path}"
+        )
+    if path.name in ("", ".", ".."):
+        raise DatabaseConfigurationError(
+            f"{DB_PATH_ENV_VAR} must name a database file: {text}"
+        )
+    return path
+
+
+def resolve_db_path():
+    """Resolve the active database path from the environment or live default."""
+    configured = _read_environment_db_path()
+    if configured is not None:
+        return configured
+    return _canonical_path(LIVE_DB_PATH)
+
+
+def refresh_database_path():
+    """Re-read the environment and update the active path globals."""
+    global DB_PATH, DATA_DIR
+    DB_PATH = resolve_db_path()
+    DATA_DIR = DB_PATH.parent
+    return DB_PATH
+
+
+# The production database lives in ``data/`` next to this file. Tests and
+# development runs set POCKET_LEDGER_DB to a separate temporary file.
+DB_PATH = resolve_db_path()
+DATA_DIR = DB_PATH.parent
+
+
+def in_test_mode():
+    """True under pytest or when test mode is explicitly requested."""
+    explicit = os.environ.get(TEST_MODE_ENV_VAR, "").strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    return "PYTEST_CURRENT_TEST" in os.environ
+
+
+def is_development_database():
+    """True when the active path is not the canonical production database."""
+    return str(_canonical_path(DB_PATH)) != str(_canonical_path(LIVE_DB_PATH))
 
 # Kept for backwards compatibility: older code imported this constant.
 CREATE_TABLE_SQL = CREATE_TRANSACTIONS_V1_SQL
@@ -56,8 +132,18 @@ _write_context = contextvars.ContextVar("pocket_ledger_write_connection", defaul
 
 def _open_connection():
     """Open a brand-new connection with the settings the app relies on."""
+    path = _canonical_path(DB_PATH)
+
+    if in_test_mode() and str(path) == str(_canonical_path(LIVE_DB_PATH)):
+        raise DatabaseSafetyError(
+            "Refusing to open the live database while test mode is active.\n"
+            f"Set {DB_PATH_ENV_VAR} to a temporary SQLite file before any "
+            f"database connection is created. Remove {TEST_MODE_ENV_VAR} only "
+            "for normal production use."
+        )
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)  # create data/ if it is missing
-    connection = sqlite3.connect(DB_PATH, timeout=10)
+    connection = sqlite3.connect(path, timeout=10)
     connection.row_factory = sqlite3.Row  # lets us read columns by name
     connection.execute("PRAGMA busy_timeout = 5000")
     connection.execute("PRAGMA foreign_keys = ON")

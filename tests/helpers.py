@@ -3,7 +3,19 @@
 import sqlite3
 from pathlib import Path
 
+import database
 from migrations import CREATE_TRANSACTIONS_V1_SQL
+
+
+def require_safe_writable_path(path):
+    """Reject writable helper targets that resolve to the canonical live DB."""
+    candidate = database._canonical_path(path)
+    if candidate == database._canonical_path(database.LIVE_DB_PATH):
+        raise database.DatabaseSafetyError(
+            "Refusing writable test/helper access to the live database at "
+            f"{candidate}. Use a temporary POCKET_LEDGER_DB path instead."
+        )
+    return Path(path)
 
 # Five neutral sample rows used to build a throwaway "old" database. The real
 # data is never copied into the repository; the live-database test copies it
@@ -20,8 +32,12 @@ SAMPLE_LEGACY_ROWS = (
 def copy_database(source_path, destination_path):
     """Copy a database safely with SQLite's backup API."""
     source_path = Path(source_path)
-    destination_path = Path(destination_path)
-    source = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+    destination_path = require_safe_writable_path(destination_path)
+    # immutable=1 keeps SQLite from creating -wal/-shm sidecars beside the
+    # live database. This is a read-only inspection copy, not a live backup.
+    source = sqlite3.connect(
+        f"file:{source_path.as_posix()}?mode=ro&immutable=1", uri=True
+    )
     target = sqlite3.connect(destination_path)
     try:
         source.backup(target)
@@ -33,7 +49,7 @@ def copy_database(source_path, destination_path):
 
 def make_legacy_database(path, rows=SAMPLE_LEGACY_ROWS):
     """Create a version-0 database with the original five-column table."""
-    path = Path(path)
+    path = require_safe_writable_path(path)
     connection = sqlite3.connect(path)
     try:
         connection.execute(CREATE_TRANSACTIONS_V1_SQL)
@@ -54,6 +70,7 @@ def make_legacy_database(path, rows=SAMPLE_LEGACY_ROWS):
 
 def fetch_all(path, sql, parameters=()):
     """Run a query and return plain dictionaries."""
+    require_safe_writable_path(path)
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
     try:

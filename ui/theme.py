@@ -125,6 +125,14 @@ QLabel#field {{ color: {HIGHLIGHT}; font-size: 10px; font-weight: 700; letter-sp
 QLabel#accent {{ color: {HIGHLIGHT}; font-weight: 700; }}
 QLabel#statusOk {{ color: {POSITIVE}; }}
 QLabel#statusError {{ color: {NEGATIVE}; font-weight: 700; }}
+QLabel#devBadge {{
+    background: {PRIMARY};
+    color: {ON_ACCENT};
+    border-radius: 7px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 700;
+}}
 
 QLineEdit, QDateEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     background: {SURFACE_ALT};

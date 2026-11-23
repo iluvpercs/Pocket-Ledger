@@ -106,6 +106,23 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 A native window opens with a sidebar: **Dashboard**, **Transactions**,
 **Import CSV** and **Settings**. Close the window (or press `Alt+F4`) to quit.
 
+### Safe development databases
+
+Tests and development runs should never use the real database. Set
+`POCKET_LEDGER_DB` to a separate SQLite file before starting Python:
+
+```powershell
+$env:POCKET_LEDGER_DB = "$env:TEMP\pocket-ledger-dev.db"
+.\.venv\Scripts\python.exe desktop_app.py
+```
+
+The desktop window shows a **DEV DB** badge whenever the active path is not the
+production `data/pocket_ledger.db`. Settings always shows the active path.
+
+`database.py` also refuses to open the live database when `POCKET_LEDGER_TEST_MODE`
+is enabled. Pytest enables this automatically and points every test at a
+temporary database before any initialization runs.
+
 ### Screens and workflows
 
 - **Dashboard** — welcome card and a shortcut to Transactions.
@@ -245,10 +262,12 @@ A production app would store paise as whole numbers to avoid rounding quirks.
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The suite never writes to the live database. Migration tests copy it with
-SQLite's backup API, and an automatic check fails the run if the live file's
-size, timestamp or SHA-256 changes. Qt tests run offscreen
-(`QT_QPA_PLATFORM=offscreen`). Coverage includes:
+The suite never writes to the live database. A central connection guard refuses
+live connections in test mode, every test uses a temporary `POCKET_LEDGER_DB`,
+and per-test plus session-level fingerprints cover the live file and its
+WAL/SHM/journal sidecars. Migration tests copy the live file through SQLite's
+read-only backup API. Qt tests run offscreen (`QT_QPA_PLATFORM=offscreen`).
+Coverage includes:
 
 - migrating a copy of the real database and preserving every row;
 - UUIDs, timestamps, schema version, indexes and the change log;
@@ -259,7 +278,9 @@ size, timestamp or SHA-256 changes. Qt tests run offscreen
 - all-or-nothing rollback, change-log entries and import metadata;
 - offscreen Qt: main window, table load/sort/filter, add/edit/delete, import
   dialog, table models and background workers;
-- formatting helpers moved out of the old Streamlit and Tk screens.
+- formatting helpers moved out of the old Streamlit and Tk screens;
+- database path isolation, fail-closed live connection checks, worker cleanup
+  and live-database fingerprint coverage.
 
 ## Troubleshooting
 

@@ -1,6 +1,5 @@
 """Tests for schema versioning, data preservation and rollback."""
 
-import sqlite3
 import uuid
 from datetime import datetime, timezone
 
@@ -23,15 +22,18 @@ from tests.helpers import (
 def test_live_database_copy_keeps_every_transaction(live_database_copy):
     """The most important test: a copy of the real file survives migration."""
     before = legacy_snapshot(live_database_copy)
-    assert len(before["rows"]) == 5
+    assert before["rows"], "The live database copy is empty; nothing to preserve."
 
     version = database.initialize_database()
 
     after = legacy_snapshot(live_database_copy)
+    after_rows = fetch_all(live_database_copy, "SELECT id FROM transactions ORDER BY id")
     assert version == migrations.SCHEMA_VERSION
     assert after["user_version"] == migrations.SCHEMA_VERSION
     assert after["rows"] == before["rows"]
-    assert len(database.get_all_transactions()) == 5
+    assert [row["id"] for row in after_rows] == [
+        row["id"] for row in before["rows"]
+    ]
 
 
 def test_migration_adds_columns_tables_and_indexes(legacy_database):
@@ -165,8 +167,8 @@ def test_failed_migration_rolls_back_and_can_be_retried(
 
 
 def test_fresh_database_is_created_at_latest_version(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "fresh.db")
+    monkeypatch.setenv(database.DB_PATH_ENV_VAR, str(tmp_path / "fresh.db"))
+    database.refresh_database_path()
 
     assert database.initialize_database() == migrations.SCHEMA_VERSION
 
@@ -203,13 +205,10 @@ def test_existing_ids_are_reused_and_next_id_continues(legacy_database):
     assert new_id == 8
 
 
-def test_database_from_a_newer_app_is_refused(legacy_database):
-    connection = sqlite3.connect(legacy_database)
-    try:
-        connection.execute("PRAGMA user_version = 99")
-        connection.commit()
-    finally:
-        connection.close()
+def test_database_from_a_newer_app_is_refused(legacy_database, raw_connection):
+    connection = raw_connection(legacy_database)
+    connection.execute("PRAGMA user_version = 99")
+    connection.commit()
 
     with pytest.raises(RuntimeError, match="newer version"):
         database.initialize_database()
