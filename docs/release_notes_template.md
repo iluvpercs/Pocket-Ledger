@@ -18,9 +18,9 @@ same application code and the supplied desktop icon.
 
 ## Artifacts
 
-- `PocketLedger-v{{VERSION}}-win64-portable.zip` — extract anywhere and run
+- `PocketLedger-v{{VERSION}}-win64-portable.zip` - extract anywhere and run
   `PocketLedger.exe`; no installation or admin rights required.
-- `PocketLedger-v{{VERSION}}-win64-setup.exe` — standard per-user Windows
+- `PocketLedger-v{{VERSION}}-win64-setup.exe` - standard per-user Windows
   installer with Start Menu shortcut, optional desktop shortcut and an
   Apps & Features uninstall entry.
 
