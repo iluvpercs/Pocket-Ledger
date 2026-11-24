@@ -117,33 +117,6 @@ All data stays on the machine. The installer never copies a database into its ow
 
 SQLite may create `-wal` and `-shm` sidecar files while the app is running. Close the app before copying the database by hand. To start over, close the app and delete the active database file; an empty one is recreated automatically.
 
-## Project structure
-
-```text
-pocket-ledger/
-├── desktop_app.py          # Application entry point
-├── database.py             # Public data functions
-├── migrations.py           # Versioned schema upgrades
-├── version.py              # Application version
-├── release_paths.py        # Packaged-build data locations
-├── PocketLedger.spec       # PyInstaller build spec
-├── requirements.txt        # Runtime and test packages
-├── requirements-build.txt  # Release build tools
-├── importers/              # CSV parsing, dedupe and import service
-├── icons/
-│   ├── PC.svg              # Supplied desktop icon source
-│   ├── PC.ico              # Windows title/taskbar icon
-│   └── Mobile.svg          # Supplied mobile icon
-├── installer/              # Inno Setup script
-├── scripts/                # Release build and verification scripts
-├── docs/                   # README images and release notes template
-├── data/                   # Local database and migration backups
-├── sync/                   # Local-first sync building blocks
-├── tests/                  # Automated test suite
-├── ui/                     # PySide6 screens and shared theme
-└── utils/                  # Currency, formatting and money helpers
-```
-
 ## Run the tests
 
 ```powershell
