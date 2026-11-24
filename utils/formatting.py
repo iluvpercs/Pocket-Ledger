@@ -8,6 +8,7 @@ the tests can use them without starting a GUI toolkit.
 from datetime import datetime
 
 from utils.calculations import format_inr
+from utils.money import format_money
 
 
 def format_transaction_date(iso_date):
@@ -42,3 +43,16 @@ def transaction_label(row):
         f"{transaction_type_label(row['transaction_type'])} · "
         f"{format_inr(row['amount'])} · {row['category']}"
     )
+
+
+# --- Milestone 3B helpers ---------------------------------------------------
+
+def format_minor(minor, currency_code, precision):
+    """Format integer minor units for display in the account's currency."""
+    return format_money(minor, currency_code, precision)
+
+
+def format_signed_minor(minor, currency_code, precision, transaction_type=None):
+    """Format minor units with a +/− sign for income or expense rows."""
+    prefix = "+" if transaction_type == "income" else "−"
+    return prefix + format_money(abs(int(minor)), currency_code, precision)

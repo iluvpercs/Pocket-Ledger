@@ -2,7 +2,9 @@
 
 The desktop app is split into small modules:
 - theme.py        colours, fonts and shared widgets
-- dashboard.py    the welcome screen
-- transactions.py add, list and delete transactions
-- settings.py     a placeholder settings page
+- dashboard.py    per-account totals and first-run prompt
+- transactions.py add, list, filter, edit and delete transactions
+- accounts.py     account management
+- import_csv.py   CSV statement import dialog
+- settings.py     app information and local data location
 """

@@ -70,8 +70,8 @@ def test_desktop_table_loads_sorts_and_filters(qapp, temp_database):
         assert view.proxy_model.source_row_dict(0)["category"] == "Rent"
 
         view.filter_entry.clear()
-        view.proxy_model.sort(4, Qt.DescendingOrder)
-        first = view.proxy_model.data(view.proxy_model.index(0, 4))
+        view.proxy_model.sort(5, Qt.DescendingOrder)
+        first = view.proxy_model.data(view.proxy_model.index(0, 5))
         assert "30.00" in first
     finally:
         app.close()
@@ -112,6 +112,9 @@ def test_desktop_add_edit_delete_via_ui(qapp, temp_database, monkeypatch):
 
             def exec(self):
                 return QDialog.Accepted
+
+            def amount_minor(self):
+                return 9900
 
         monkeypatch.setattr(transactions_module, "EditTransactionDialog", FakeEditDialog)
         view.table.selectRow(0)

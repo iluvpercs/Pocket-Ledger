@@ -11,18 +11,26 @@ def _rows():
         {
             "id": 1,
             "transaction_type": "expense",
-            "amount": 125.5,
+            "amount_minor": 12550,
             "category": "Food",
             "description": "Lunch",
             "transaction_date": "2026-11-22",
+            "account_uuid": "acc-inr",
+            "account_name": "Main",
+            "currency_code": "INR",
+            "currency_precision": 2,
         },
         {
             "id": 2,
             "transaction_type": "income",
-            "amount": 25000.0,
+            "amount_minor": 2500000,
             "category": "Salary",
             "description": "Monthly salary",
             "transaction_date": "2026-11-23",
+            "account_uuid": "acc-inr",
+            "account_name": "Main",
+            "currency_code": "INR",
+            "currency_precision": 2,
         },
     ]
 
@@ -30,11 +38,13 @@ def _rows():
 def test_transaction_model_shapes_rows_without_widgets(qapp):
     model = TransactionTableModel(_rows())
     assert model.rowCount() == 2
-    assert model.columnCount() == 5
+    assert model.columnCount() == 6
     assert model.headerData(0, Qt.Horizontal) == "Date"
+    assert model.headerData(2, Qt.Horizontal) == "Account"
     assert model.data(model.index(0, 0)) == "22 Nov 2026"
     assert model.data(model.index(0, 1)) == "Expense"
-    assert model.data(model.index(0, 4)) == "−₹125.50"
+    assert model.data(model.index(0, 2)) == "Main · INR"
+    assert model.data(model.index(0, 5)) == "−₹125.50"
     assert model.row_id(1) == 2
     assert model.data(model.index(0, 0), Qt.UserRole) == 1
 
@@ -56,8 +66,8 @@ def test_proxy_filters_all_columns_and_maps_back_to_source(qapp):
     assert proxy.source_row_id(0) == 1
 
     proxy.set_filter_text("")
-    proxy.sort(4, Qt.DescendingOrder)
-    assert "25,000.00" in proxy.data(proxy.index(0, 4))
+    proxy.sort(5, Qt.DescendingOrder)
+    assert "25,000.00" in proxy.data(proxy.index(0, 5))
 
 
 def test_import_preview_model_edits_go_through_service(qapp, temp_database, tmp_path):

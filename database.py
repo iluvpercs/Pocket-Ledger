@@ -826,6 +826,51 @@ def get_transaction(transaction_id):
         connection.close()
 
 
+def get_account_totals():
+    """Return per-account income, expense, balance and transaction count.
+
+    All totals are integer minor units aggregated in SQL. Accounts with no live
+    transactions are included with zero totals. Callers must display each row in
+    its own currency and must not sum rows across currencies.
+    """
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT
+                a.uuid AS account_uuid,
+                a.name AS account_name,
+                a.currency_code,
+                a.currency_precision,
+                a.is_default,
+                COALESCE(SUM(
+                    CASE WHEN t.transaction_type = 'income'
+                         THEN t.amount_minor ELSE 0 END
+                ), 0) AS income_minor,
+                COALESCE(SUM(
+                    CASE WHEN t.transaction_type = 'expense'
+                         THEN t.amount_minor ELSE 0 END
+                ), 0) AS expense_minor,
+                COALESCE(SUM(
+                    CASE WHEN t.transaction_type = 'income' THEN t.amount_minor
+                         WHEN t.transaction_type = 'expense' THEN -t.amount_minor
+                         ELSE 0 END
+                ), 0) AS balance_minor,
+                COUNT(t.id) AS transaction_count
+            FROM accounts a
+            LEFT JOIN transactions t
+                ON t.account_uuid = a.uuid
+               AND t.deleted_at_ms IS NULL
+            WHERE a.deleted_at_ms IS NULL
+            GROUP BY a.id, a.uuid, a.name, a.currency_code, a.currency_precision, a.is_default
+            ORDER BY a.is_default DESC, a.id ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
 # -------------------------------------------------------------------- update
 def update_transaction(
     transaction_id,

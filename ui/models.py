@@ -17,17 +17,18 @@ from ui.theme import (
     POSITIVE_SOFT,
 )
 from utils.formatting import (
-    format_signed_amount,
+    format_signed_minor,
     format_transaction_date,
     shorten,
     transaction_type_label,
 )
+from utils.money import format_money, minor_to_decimal
 
 
 class TransactionTableModel(QAbstractTableModel):
-    """A virtual table over the rows returned by ``get_all_transactions()``."""
+    """A virtual table over rows returned by ``get_all_transactions()``."""
 
-    HEADERS = ("Date", "Type", "Category", "Description", "Amount")
+    HEADERS = ("Date", "Type", "Account", "Category", "Description", "Amount")
     SortRole = Qt.UserRole + 1
 
     def __init__(self, rows=None, parent=None):
@@ -76,13 +77,20 @@ class TransactionTableModel(QAbstractTableModel):
         if role == self.SortRole:
             if column == 0:
                 return str(row["transaction_date"])
-            if column == 4:
-                return float(row["amount"])
+            if column == 5:
+                # When multiple currencies are visible, sort by account first so
+                # amounts are only compared inside the same currency.
+                minor = int(row["amount_minor"])
+                return (
+                    f"{str(row.get('account_name', ''))}\x00"
+                    f"{str(row.get('currency_code', ''))}\x00"
+                    f"{minor + (1 << 62):020d}"
+                )
             return str(self.data(index, Qt.DisplayRole) or "")
         if role == Qt.TextAlignmentRole:
-            return Qt.AlignRight | Qt.AlignVCenter if column == 4 else Qt.AlignLeft | Qt.AlignVCenter
+            return Qt.AlignRight | Qt.AlignVCenter if column == 5 else Qt.AlignLeft | Qt.AlignVCenter
         if role == Qt.ForegroundRole:
-            if column in (1, 4):
+            if column in (1, 5):
                 colour = POSITIVE if row["transaction_type"] == "income" else NEGATIVE
                 return QColor(colour)
             return None
@@ -94,11 +102,20 @@ class TransactionTableModel(QAbstractTableModel):
         if column == 1:
             return transaction_type_label(row["transaction_type"])
         if column == 2:
-            return row["category"]
+            account = str(row.get("account_name") or "Unknown account")
+            code = str(row.get("currency_code") or "")
+            return f"{account} · {code}" if code else account
         if column == 3:
-            return shorten(row["description"])
+            return row["category"]
         if column == 4:
-            return format_signed_amount(row["amount"], row["transaction_type"])
+            return shorten(row["description"])
+        if column == 5:
+            return format_signed_minor(
+                row["amount_minor"],
+                row["currency_code"],
+                int(row["currency_precision"]),
+                row["transaction_type"],
+            )
         return None
 
     def flags(self, index):
@@ -108,30 +125,47 @@ class TransactionTableModel(QAbstractTableModel):
 
 
 class TransactionProxyModel(QSortFilterProxyModel):
-    """Sortable table with a free-text filter across every visible column."""
+    """Sortable table with text and account filtering."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._filter_text = ""
+        self._account_uuid = None  # None means all accounts
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setSortRole(TransactionTableModel.SortRole)
 
     def set_filter_text(self, text):
-        # invalidateFilter() is deprecated in Qt 6.12; begin/endFilterChange
-        # is the supported way to refresh a custom filter after state changes.
         self.beginFilterChange()
         self._filter_text = str(text or "").strip().lower()
+        self.endFilterChange()
+
+    def set_account_filter(self, account_uuid):
+        """Filter by account UUID, or None to show all accounts."""
+        self.beginFilterChange()
+        self._account_uuid = account_uuid or None
         self.endFilterChange()
 
     def filter_text(self):
         return self._filter_text
 
+    def account_filter(self):
+        return self._account_uuid
+
     def filterAcceptsRow(self, source_row, source_parent):
-        if not self._filter_text:
-            return True
         source = self.sourceModel()
         if source is None:
             return True
+
+        row = source.row_dict(source_row)
+        if row is None:
+            return False
+
+        if self._account_uuid and row.get("account_uuid") != self._account_uuid:
+            return False
+
+        if not self._filter_text:
+            return True
+
         for column in range(source.columnCount()):
             value = source.data(source.index(source_row, column, source_parent))
             if value is not None and self._filter_text in str(value).lower():
@@ -149,6 +183,22 @@ class TransactionProxyModel(QSortFilterProxyModel):
         if not source_index.isValid():
             return None
         return self.sourceModel().row_dict(source_index.row())
+
+
+def preview_amount_text(row):
+    """Display a parsed import amount in the account's currency."""
+    if row.amount is None:
+        return ""
+    from decimal import ROUND_HALF_UP
+
+    precision = int(getattr(row, "currency_precision", 2))
+    code = str(getattr(row, "currency_code", "") or "")
+    minor = int(
+        (row.amount * (10 ** precision)).to_integral_value(rounding=ROUND_HALF_UP)
+    )
+    if code:
+        return format_money(minor, code, precision)
+    return f"{minor_to_decimal(minor, precision):,.{precision}f}"
 
 
 class ImportPreviewModel(QAbstractTableModel):
@@ -223,7 +273,7 @@ class ImportPreviewModel(QAbstractTableModel):
             if column == 3:
                 return row.category
             if column == 4:
-                return str(row.amount) if row.amount is not None else ""
+                return preview_amount_text(row)
             if column == 5:
                 return self.status_text(row)
         if role == Qt.TextAlignmentRole and column == 4:
@@ -249,8 +299,6 @@ class ImportPreviewModel(QAbstractTableModel):
         row_number = index.row()
         column = index.column()
         if column == 0 and role in (Qt.CheckStateRole, self.IncludeRole, Qt.EditRole):
-            # Shiboken enums are truthy even when they represent Unchecked, so
-            # compare the numeric value explicitly.
             try:
                 checked = int(value) == int(Qt.Checked)
             except (TypeError, ValueError):

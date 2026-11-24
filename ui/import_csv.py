@@ -6,6 +6,7 @@ statement does not create thousands of widgets.
 """
 
 from pathlib import Path
+from decimal import Decimal, ROUND_HALF_UP
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -22,19 +23,34 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+import database
 from importers import csv_parser, service
 from ui.models import ImportPreviewModel
 from ui.theme import BadgeLabel, card, field_label, page_header, primary_button
 from ui.workers import run_database_task
-from utils.calculations import format_inr
+from utils.money import format_money
 
-def _parse_and_preview(path, mapping=None):
-    """File read + duplicate check, always called in a worker thread."""
+
+def _parse_and_preview(path, mapping=None, account_uuid=None):
+    """File read + account-scoped duplicate check, always in a worker thread."""
     parsed = csv_parser.parse_csv(path, mapping=mapping)
     if not parsed.ok:
         raise ValueError(parsed.error or "This file could not be read.")
-    preview = service.build_preview(parsed, source_file=str(path))
+    preview = service.build_preview(
+        parsed,
+        source_file=str(path),
+        account_uuid=account_uuid,
+    )
     return parsed, preview
+
+
+def _format_major(amount, currency_code, precision):
+    """Format a major-unit Decimal as money without float rounding."""
+    value = Decimal(str(amount or 0)).quantize(
+        Decimal(1).scaleb(-int(precision)), rounding=ROUND_HALF_UP
+    )
+    minor = int((value * (10 ** int(precision))).to_integral_value(rounding=ROUND_HALF_UP))
+    return format_money(minor, currency_code, precision)
 
 
 FIELD_LABELS = {
@@ -64,6 +80,8 @@ class ImportCsvDialog(QDialog):
         self.parse_result = None
         self.preview = None
         self.mapping_vars = {}
+        self.accounts = database.list_accounts()
+        self._loading_accounts = False
 
         self._build()
         self._set_status("Choose a CSV statement to begin.")
@@ -86,6 +104,33 @@ class ImportCsvDialog(QDialog):
         layout.setSpacing(6)
         caption = QLabel("STATEMENT FILE")
         caption.setObjectName("accent")
+
+        account_row = QHBoxLayout()
+        account_row.addWidget(field_label("IMPORT INTO"))
+        self.account_combo = QComboBox()
+        self.account_combo.setMinimumWidth(240)
+        self._loading_accounts = True
+        try:
+            for account in self.accounts:
+                self.account_combo.addItem(
+                    f"{account['name']} · {account['currency_code']}",
+                    account["uuid"],
+                )
+            default = next(
+                (account for account in self.accounts if account["is_default"]),
+                self.accounts[0] if self.accounts else None,
+            )
+            if default is not None:
+                index = self.account_combo.findData(default["uuid"])
+                self.account_combo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self._loading_accounts = False
+        self.account_combo.currentIndexChanged.connect(self._on_account_changed)
+        self.account_hint = QLabel("")
+        self.account_hint.setObjectName("muted")
+        account_row.addWidget(self.account_combo, 1)
+        account_row.addWidget(self.account_hint)
+
         self.file_label = QLabel("No file chosen yet.")
         self.file_label.setObjectName("muted")
         actions = QHBoxLayout()
@@ -97,8 +142,10 @@ class ImportCsvDialog(QDialog):
         actions.addStretch(1)
         actions.addWidget(self.detected_label)
         layout.addWidget(caption)
+        layout.addLayout(account_row)
         layout.addWidget(self.file_label)
         layout.addLayout(actions)
+        self._update_account_hint()
         return panel
 
     def _build_mapping_card(self):
@@ -179,6 +226,37 @@ class ImportCsvDialog(QDialog):
         return panel
 
     # ------------------------------------------------------------------ files
+    def _selected_account(self):
+        account_uuid = self.account_combo.currentData()
+        for account in self.accounts:
+            if account["uuid"] == account_uuid:
+                return account
+        return self.accounts[0] if self.accounts else None
+
+    def _selected_account_uuid(self):
+        account = self._selected_account()
+        return account["uuid"] if account is not None else None
+
+    def _update_account_hint(self):
+        account = self._selected_account()
+        if account is None:
+            self.account_hint.setText("No account available")
+            return
+        precision = int(account["currency_precision"])
+        noun = "decimal" if precision == 1 else "decimals"
+        self.account_hint.setText(
+            f"{account['currency_code']} · {precision} {noun}"
+        )
+
+    def _on_account_changed(self, _index=None):
+        if self._loading_accounts:
+            return
+        self._update_account_hint()
+        if self.source_path is not None and self.preview is not None:
+            # Precision and duplicate scope both depend on the account, so
+            # rebuild the preview with the same column mapping.
+            self._load(reuse_mapping=True)
+
     def _ask_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -210,6 +288,7 @@ class ImportCsvDialog(QDialog):
             _parse_and_preview,
             self.source_path,
             override,
+            self._selected_account_uuid(),
             on_success=self._apply_preview,
             on_error=lambda message: self._set_status(
                 f"Could not read statement: {message}", "error"
@@ -248,7 +327,7 @@ class ImportCsvDialog(QDialog):
 
         header = self.parse_result.header
         options = [NONE_OPTION] + header
-        for index, field_name in enumerate(csv_parser.FIELDS):
+        for field_name in csv_parser.FIELDS:
             combo = QComboBox()
             combo.addItems(options)
             detected = self.preview.mapping.get(field_name)
@@ -265,13 +344,16 @@ class ImportCsvDialog(QDialog):
             return
         counts = service.preview_counts(self.preview)
         totals = service.preview_totals(self.preview)
+        code = self.preview.currency_code
+        precision = int(self.preview.currency_precision)
         self.counts_label.setText(
             f"{counts['total']} rows · {counts['included']} included · "
             f"{counts['duplicates']} duplicates · {counts['errors']} errors"
         )
         self.totals_label.setText(
-            f"Included: {format_inr(totals['income'])} in · "
-            f"{format_inr(totals['expense'])} out · net {format_inr(totals['net'])}"
+            f"Included ({code}): {_format_major(totals['income'], code, precision)} in · "
+            f"{_format_major(totals['expense'], code, precision)} out · "
+            f"net {_format_major(totals['net'], code, precision)}"
         )
         label = f"Import {counts['included']} transaction" + ("s" if counts["included"] != 1 else "")
         self.import_button.setText(label)

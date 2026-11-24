@@ -40,7 +40,7 @@ class SettingsView(QWidget):
             ("Version", "0.3 · Qt edition"),
             ("Interface", "PySide6 (Qt for Python)"),
             ("Storage", "SQLite database on this computer"),
-            ("Currency", "Indian Rupee (₹)"),
+            ("Currency", "Per account (chosen when the account is created)"),
             ("Theme", "Dark"),
         ):
             row = QHBoxLayout()
@@ -48,6 +48,7 @@ class SettingsView(QWidget):
             name.setObjectName("muted")
             name.setFixedWidth(150)
             detail = QLabel(value)
+            detail.setWordWrap(True)
             row.addWidget(name)
             row.addWidget(detail, 1)
             layout.addLayout(row)
@@ -83,16 +84,18 @@ class SettingsView(QWidget):
         coming = card()
         layout = QVBoxLayout(coming)
         layout.setContentsMargins(24, 16, 24, 16)
-        heading = QLabel("Coming in later milestones")
+        heading = QLabel("Known limitations")
         heading.setStyleSheet("font-size: 14px; font-weight: 700;")
         layout.addWidget(heading)
         for plan in (
-            "Dashboard totals for income, expenses and balance.",
-            "Monthly reports and charts.",
-            "Backup and restore for your database file.",
+            "No PDF import, bank connections, cloud sync, or mobile app yet.",
+            "No monthly reports, budgets, charts, or backup/restore UI yet.",
+            "Account currency is fixed after creation; create a new account for a different currency.",
+            "Amounts are stored as integer minor units (0/2/3 decimal currencies supported).",
         ):
             text = QLabel(f"•  {plan}")
             text.setObjectName("subtitle")
+            text.setWordWrap(True)
             layout.addWidget(text)
         return coming
 

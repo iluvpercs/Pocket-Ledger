@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 import database
+from ui.accounts import AccountsView
 from ui.dashboard import DashboardView
 from ui.import_csv import ImportCsvDialog
 from ui.settings import SettingsView
@@ -38,12 +39,14 @@ SIDEBAR_WIDTH = 300
 PAGES = {
     "dashboard": DashboardView,
     "transactions": TransactionsView,
+    "accounts": AccountsView,
     "settings": SettingsView,
 }
 
 NAV_ITEMS = (
     ("dashboard", "Dashboard"),
     ("transactions", "Transactions"),
+    ("accounts", "Accounts"),
     ("import", "Import CSV"),
     ("settings", "Settings"),
 )
@@ -98,7 +101,7 @@ class PocketLedgerApp(QMainWindow):
         brand_layout = QHBoxLayout(brand)
         brand_layout.setContentsMargins(0, 0, 0, 0)
         brand_layout.setSpacing(10)
-        brand_layout.addWidget(IconBadge("₹"))
+        brand_layout.addWidget(IconBadge("PL"))
         names = QVBoxLayout()
         title = QLabel("Pocket Ledger")
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
@@ -155,13 +158,24 @@ class PocketLedgerApp(QMainWindow):
         self.nav_buttons[name].setChecked(True)
         self.current_page = name
 
-        if hasattr(page, "refresh") and name == "transactions":
+        if hasattr(page, "refresh") and name in ("transactions", "dashboard", "accounts"):
             page.refresh()
         return page
 
     def page_widget(self, name=None):
         """Return a cached page, mostly useful for tests."""
         return self.pages.get(name or self.current_page)
+
+    def notify_accounts_changed(self):
+        """Refresh pages that show account names, currencies or totals."""
+        for name in ("transactions", "dashboard", "accounts"):
+            page = self.pages.get(name)
+            if page is None:
+                continue
+            if hasattr(page, "on_accounts_changed"):
+                page.on_accounts_changed()
+            elif hasattr(page, "refresh"):
+                page.refresh()
 
     # ------------------------------------------------------------ CSV import
     def open_import_dialog(self):
@@ -176,6 +190,7 @@ class PocketLedgerApp(QMainWindow):
 
     def _on_import_dialog_closed(self):
         self.import_dialog = None
+        self.notify_accounts_changed()
 
     # ----------------------------------------------------------- error screen
     def _show_database_error(self, error):

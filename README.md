@@ -10,26 +10,27 @@ native desktop application, `desktop_app.py`.
 ## Features
 
 - Automatically creates a local SQLite database on first run.
-- Add income and expense transactions with amount, category, description and date.
-- View all saved transactions in a fast, sortable, filterable table.
+- Multi-account support: create, rename, set default, and delete empty accounts.
+- Per-account currency (ISO 4217 code + precision 0/2/3). Account currency is fixed after creation.
+- Add income and expense transactions with account, amount, category, description and date.
+- View transactions in a fast, sortable, filterable table with account/currency display.
 - Edit or delete a transaction (delete asks for confirmation first).
-- Import bank statements from CSV, with a reviewable preview and duplicate
-  detection (see [Importing a CSV](#importing-a-csv)).
-- Input validation: amount must be greater than zero, type must be income or
-  expense, and the date must be valid.
-- Amounts are shown in Indian Rupees (₹).
-- Dark theme throughout.
+- Dashboard shows per-account totals (income, expenses, balance) in each account's currency; no cross-currency aggregation.
+- Import bank statements from CSV into a selected account, with reviewable preview, duplicate detection scoped to account, and currency-aware totals.
+- Strict amount validation: amount must be greater than zero and respect the selected account's currency precision; amounts are stored as integer minor units (no floating-point financial math).
+- Dark theme throughout. Private local data only.
 
-## Database foundation (Milestone 1)
+## Database foundation
 
-- Schema versioning with `PRAGMA user_version`, currently version **3**.
-- Stable UUIDs on every transaction while keeping the original integer `id`.
+- Schema versioning with `PRAGMA user_version`, currently version **4**.
+- Accounts table: UUID, name, ISO currency code, precision (0/2/3), default flag, timestamps, soft delete, revision/sync metadata.
+- Transactions store `amount_minor` (INTEGER minor units) and `account_uuid`; legacy `amount` REAL is kept for compatibility where needed.
+- Stable UUIDs on transactions/accounts while keeping local integer `id`.
 - Created/updated timestamps, revision numbers, device ids and soft deletes.
 - Append-only `sync_changes` log, ready for incremental sync later.
-- `update_transaction()` for editing, exposed in the desktop table.
-- `import_hash` and supporting tables for statement importing.
+- `import_hash` duplicate detection scoped per account.
 - WAL mode, a five-second busy timeout, and automatic pre-migration backups.
-- A pytest suite that never writes to the live database.
+- Pytest suite uses temp DB isolation and live-DB fingerprint guards; tests must never write to `data\pocket_ledger.db`.
 
 ## Project structure
 
@@ -76,7 +77,7 @@ pocket-ledger/
 │   └── settings.py         # App information page
 └── utils/
     ├── __init__.py
-    ├── calculations.py     # ₹ formatting
+    ├── calculations.py     # legacy INR helper (deprecated for new UI paths)
     └── formatting.py       # Shared display helpers (no toolkit imports)
 ```
 
@@ -104,7 +105,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 A native window opens with a sidebar: **Dashboard**, **Transactions**,
-**Import CSV** and **Settings**. Close the window (or press `Alt+F4`) to quit.
+**Accounts**, **Import CSV** and **Settings**. Close the window (or press `Alt+F4`) to quit.
 
 ### Safe development databases
 
@@ -125,11 +126,11 @@ temporary database before any initialization runs.
 
 ### Screens and workflows
 
-- **Dashboard** — welcome card and a shortcut to Transactions.
-- **Transactions** — add income/expenses, browse a sortable table, filter by
-  text, edit a selected row (or double-click it), and delete with confirmation.
-- **Import CSV** — review and import a bank statement; see below.
-- **Settings** — app information, database location and future plans.
+- **Dashboard** — per-account cards showing income, expenses and balance in each account's currency. No cross-currency totals. First-run prompt when only the untouched default INR account exists with no transactions.
+- **Transactions** — select account, add income/expenses with strict currency-precision validation, browse/sort/filter table, filter by account or all accounts, edit a selected row (or double-click it), and delete with confirmation.
+- **Accounts** — create (name + searchable currency), rename, make default, delete. Currency is read-only after creation; deletion is blocked for accounts with live transactions or when it is the only remaining account.
+- **Import CSV** — select destination account, review and import a bank statement; duplicate detection is scoped to the selected account. See below.
+- **Settings** — app information, active database location and known limitations.
 
 ### How the desktop code is organised
 
@@ -157,32 +158,17 @@ The Qt model/view design removes that cost entirely.
 The **Import CSV** entry in the sidebar handles statements you downloaded from
 your bank — nothing is uploaded anywhere.
 
-1. Choose the `.csv` file. The importer detects the encoding (UTF-8 or
-   Windows-1252), the separator (comma, semicolon or tab), the real header row
-   and the date format.
-2. Check the column mapping. Date, description, amount (or separate
-   debit/credit), balance and reference are pre-filled and can be changed.
-3. Review the table. Rows can be included or excluded, and their date,
-   description, category and amount can be edited inline. Duplicate rows are
-   excluded by default; tick one to force-include it. Warning and error rows
-   show a reason instead of crashing the import.
-4. Click **Import**. All included rows are saved in one all-or-nothing
-   database transaction: they get UUIDs, timestamps, change-log entries and
-   import hashes just like manually added transactions. A result summary is
-   shown afterwards.
+1. Choose the destination **account**. Amounts are interpreted using that account's currency and decimal precision, and duplicate detection is scoped to that account.
+2. Choose the `.csv` file. The importer detects the encoding (UTF-8 or Windows-1252), the separator (comma, semicolon or tab), the real header row and the date format.
+3. Check the column mapping. Date, description, amount (or separate debit/credit), balance and reference are pre-filled and can be changed.
+4. Review the table. Rows can be included or excluded, and their date, description, category and amount can be edited inline. Duplicate rows are excluded by default; tick one to force-include it. Warning and error rows show a reason instead of crashing the import.
+5. Click **Import**. All included rows are saved in one all-or-nothing database transaction: they get UUIDs, timestamps, change-log entries and account-scoped import hashes just like manually added transactions. A result summary is shown afterwards.
 
-Supported value formats include `DD/MM/YYYY`, `DD-Mon-YYYY`, `YYYY-MM-DD`,
-Indian number grouping (`1,23,456.78`), currency symbols, `(123.45)`
-parentheses for negatives, and `Dr`/`Cr` suffixes. Amounts are parsed with
-`Decimal`; no extra third-party package is needed for the importer.
+Supported value formats include `DD/MM/YYYY`, `DD-Mon-YYYY`, `YYYY-MM-DD`, Indian number grouping (`1,23,456.78`), currency symbols, `(123.45)` parentheses for negatives, and `Dr`/`Cr` suffixes. Amounts are parsed with `Decimal`; no extra third-party package is needed.
 
-Duplicate detection uses a SHA-256 hash of the normalised date, signed amount
-in paise and description, plus an occurrence index so two genuinely identical
-same-day purchases are both kept. Re-importing the same file creates zero new
-transactions. A soft-deleted match is flagged as **WAS DELETED**.
+Duplicate detection uses a SHA-256 hash of the normalised date, signed amount in the account's minor units and description, plus an occurrence index so two genuinely identical same-day purchases are both kept. Re-importing the same file into the same account creates zero new transactions. A soft-deleted match is flagged as **WAS DELETED**.
 
-Automatic categories come from the editable `importers/rules.json` file. Add
-keywords or change `default_category` there; no code change is needed.
+Automatic categories come from the editable `importers/rules.json` file. Add keywords or change `default_category` there; no code change is needed.
 
 ## How it works
 
@@ -205,44 +191,31 @@ keywords or change `default_category` there; no code change is needed.
 
 ## Database details
 
-The original columns are unchanged:
+Current schema version is **4** (`PRAGMA user_version = 4`).
+
+Key transaction fields:
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | INTEGER | Local primary key, still used by the screens |
+| `id` | INTEGER | Local primary key |
+| `uuid` | TEXT | Stable global id |
 | `transaction_type` | TEXT | `income` or `expense` |
-| `amount` | REAL | Must be greater than zero |
-| `category` | TEXT | Required, e.g. Food, Rent, Salary |
+| `amount_minor` | INTEGER | Signed magnitude stored as integer minor units; displayed per account currency |
+| `amount` | REAL | Legacy compatibility field kept by migrations/data layer |
+| `account_uuid` | TEXT | Owning account |
+| `category` | TEXT | Required |
 | `description` | TEXT | Optional |
-| `transaction_date` | TEXT | Stored as `YYYY-MM-DD` |
+| `transaction_date` | TEXT | `YYYY-MM-DD` |
+| `created_at_ms` / `updated_at_ms` | INTEGER | UTC milliseconds |
+| `deleted_at_ms` | INTEGER | `NULL` means live |
+| `revision` | INTEGER | Incremented on edits |
+| `import_hash` | TEXT | Duplicate marker, unique per live account+hash |
 
-Milestone 1 adds columns for identity, editing and future sync:
+Accounts table stores name, currency code, precision, default flag, timestamps, soft delete and sync metadata.
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `uuid` | TEXT | Random global id, unique per transaction |
-| `created_at_ms` | INTEGER | UTC milliseconds |
-| `updated_at_ms` | INTEGER | UTC milliseconds |
-| `deleted_at_ms` | INTEGER | `NULL` means the row is live |
-| `revision` | INTEGER | Starts at 1, increases on every edit |
-| `origin_device_id` | TEXT | Device that created the row |
-| `last_modified_by` | TEXT | Device that made the latest change |
-| `sync_state` | TEXT | `pending`, `synced` or `conflict` |
-| `import_hash` | TEXT | Duplicate marker for statement imports |
-| `external_ref` | TEXT | Bank reference |
-| `import_batch_id` | TEXT | Import batch id |
-| `account_label` | TEXT | Bank account label |
+Supporting tables: `app_meta`, `devices`, `sync_changes`, `sync_peers`, `sync_conflicts`, `import_batches`.
 
-Supporting tables: `app_meta` (device id and settings), `devices` (paired
-devices), `sync_changes` (append-only log), `sync_peers` (sync cursors),
-`sync_conflicts` (losing versions) and `import_batches` (import history).
-
-`PRAGMA user_version` records the schema version (currently **3**). The
-database uses **WAL** mode and a five-second busy timeout. A unique partial
-index on `import_hash` prevents importing the same live transaction twice.
-
-Amounts are stored as `REAL` (floating point) to keep this milestone simple.
-A production app would store paise as whole numbers to avoid rounding quirks.
+The database uses **WAL** mode and a five-second busy timeout. Automatic pre-migration backups are written before schema upgrades.
 
 ## Your data
 
@@ -293,9 +266,11 @@ Coverage includes:
 - **Table looks empty**: check that the app is running from this folder so it
   uses `data/pocket_ledger.db`, and clear the filter box.
 
-## Not included yet
+## Known limitations / not included yet
 
-Milestone 3 and later: PDF statement import (text first, OCR-ready), FastAPI
-sync, Flutter Android, dashboard totals, monthly reports, budgets, and charts.
-The data layer supports editing and soft deletes; the screens expose add,
-view, edit, delete and CSV import for now.
+- No PDF statement import (text/OCR), no bank connections, no cloud sync/UI sync, no mobile app.
+- No monthly reports, budgets, charts, or backup/restore UI (data file is local and can be copied manually while app is closed).
+- Account currency is immutable after creation by design; create a new account for a different currency.
+- Amounts are integer minor units; supported currency precisions are 0/2/3 decimal places.
+- The UI is dark-themed only; no theme switcher.
+- Legacy `amount` REAL field remains for compatibility; UI and new logic use `amount_minor` + currency.
