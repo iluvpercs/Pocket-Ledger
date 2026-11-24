@@ -8,7 +8,12 @@ this file only wires screens together.
 """
 
 import sys
+from pathlib import Path
 
+import release_paths  # must configure frozen data paths before database imports
+release_paths.configure_environment()
+
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -28,12 +33,22 @@ from ui.accounts import AccountsView
 from ui.dashboard import DashboardView
 from ui.import_csv import ImportCsvDialog
 from ui.settings import SettingsView
-from ui.theme import IconBadge, apply_theme
+from ui.theme import BadgeLabel, IconBadge, apply_theme
 from ui.transactions import TransactionsView
+from version import APP_ID, APP_NAME, APP_VERSION, APP_VERSION_TEXT
 
-APP_TITLE = "Pocket Ledger"
-WINDOW_WIDTH = 1180
-WINDOW_HEIGHT = 760
+def _resource_path(relative):
+    """Resolve bundled assets from source runs and PyInstaller bundles alike."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / relative
+
+
+APP_TITLE = APP_NAME
+APP_VERSION_LABEL = APP_VERSION_TEXT
+APP_ICON_PATH = _resource_path("icons/PC.ico")
+APP_USER_MODEL_ID = APP_ID
+WINDOW_WIDTH = 1240
+WINDOW_HEIGHT = 820
 SIDEBAR_WIDTH = 300
 
 PAGES = {
@@ -58,6 +73,7 @@ class PocketLedgerApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
+        self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setMinimumSize(1020, 680)
 
@@ -94,24 +110,31 @@ class PocketLedgerApp(QMainWindow):
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(SIDEBAR_WIDTH)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(16, 24, 14, 22)
+        layout.setContentsMargins(16, 22, 14, 20)
         layout.setSpacing(4)
 
         brand = QWidget()
         brand_layout = QHBoxLayout(brand)
         brand_layout.setContentsMargins(0, 0, 0, 0)
-        brand_layout.setSpacing(10)
-        brand_layout.addWidget(IconBadge("PL"))
+        brand_layout.setSpacing(12)
+        brand_layout.addWidget(IconBadge("PL", size=52))
         names = QVBoxLayout()
+        names.setSpacing(2)
         title = QLabel("Pocket Ledger")
-        title.setStyleSheet("font-size: 16px; font-weight: 700;")
-        caption = QLabel("Personal finance")
-        caption.setObjectName("muted")
+        title.setStyleSheet("font-size: 15px; font-weight: 800;")
+        caption = QLabel("YOUR MONEY. YOUR CONTROL.")
+        caption.setObjectName("eyebrow")
+        caption.setWordWrap(True)
         names.addWidget(title)
         names.addWidget(caption)
         brand_layout.addLayout(names, 1)
         layout.addWidget(brand)
-        layout.addSpacing(26)
+        layout.addSpacing(22)
+
+        divider = QFrame()
+        divider.setObjectName("divider")
+        layout.addWidget(divider)
+        layout.addSpacing(14)
 
         menu = QLabel("MENU")
         menu.setObjectName("field")
@@ -129,10 +152,8 @@ class PocketLedgerApp(QMainWindow):
 
         layout.addStretch(1)
         if database.is_development_database():
-            dev_badge = QLabel("DEV DB")
-            dev_badge.setObjectName("devBadge")
-            layout.addWidget(dev_badge)
-        footer = QLabel("Local data only\nDesktop · v0.3")
+            layout.addWidget(BadgeLabel("DEV DB", tone="lime"))
+        footer = QLabel(f"Local data only\nDesktop · v{APP_VERSION}")
         footer.setObjectName("muted")
         layout.addWidget(footer)
         return sidebar
@@ -177,6 +198,23 @@ class PocketLedgerApp(QMainWindow):
             elif hasattr(page, "refresh"):
                 page.refresh()
 
+    def notify_data_changed(self, source=None):
+        """Invalidate cached pages after transaction data changes.
+
+        ``source`` is a page that has already scheduled its own refresh. It is
+        skipped so one edit never triggers the same query twice. Pages that are
+        not built yet need no work: :meth:`show_page` refreshes them when they
+        are first opened.
+        """
+        for name in ("dashboard", "accounts", "transactions"):
+            page = self.pages.get(name)
+            if page is None or page is source:
+                continue
+            if hasattr(page, "on_data_changed"):
+                page.on_data_changed()
+            elif hasattr(page, "refresh"):
+                page.refresh()
+
     # ------------------------------------------------------------ CSV import
     def open_import_dialog(self):
         """Open (or focus) the CSV import dialog from the sidebar."""
@@ -197,8 +235,23 @@ class PocketLedgerApp(QMainWindow):
         QMessageBox.critical(self, "Pocket Ledger", f"The database could not be opened:\n{error}")
 
 
+def _set_windows_app_user_model_id():
+    """Keep the taskbar grouped under Pocket Ledger instead of python.exe."""
+    if sys.platform != "win32":
+        return
+    try:
+        from ctypes import windll
+
+        windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        # Icon grouping is cosmetic; never block the app on a platform quirk.
+        pass
+
+
 def main():
+    _set_windows_app_user_model_id()
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(APP_ICON_PATH)))
     apply_theme(app)
     window = PocketLedgerApp()
     window.show()

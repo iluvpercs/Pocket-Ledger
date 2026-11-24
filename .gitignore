@@ -18,6 +18,11 @@ data/certs/
 # Test cache
 .pytest_cache/
 
+# Windows release build output
+build/
+dist/
+installer/Output/
+
 # Android signing files (future milestone)
 *.jks
 key.properties

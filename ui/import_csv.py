@@ -19,14 +19,23 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTableView,
     QVBoxLayout,
+    QWidget,
 )
 
 import database
 from importers import csv_parser, service
 from ui.models import ImportPreviewModel
-from ui.theme import BadgeLabel, card, field_label, page_header, primary_button
+from ui.theme import (
+    BadgeLabel,
+    card,
+    field_label,
+    page_header,
+    primary_button,
+    section_title,
+)
 from ui.workers import run_database_task
 from utils.money import format_money
 
@@ -89,21 +98,33 @@ class ImportCsvDialog(QDialog):
     # ------------------------------------------------------------------ build
     def _build(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
         layout.addWidget(page_header("Import CSV", "Review every row before anything is saved."))
-        layout.addWidget(self._build_file_card())
-        layout.addWidget(self._build_mapping_card())
-        layout.addWidget(self._build_preview_card(), 1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        scroll.setWidget(content)
+        inner = QVBoxLayout(content)
+        inner.setContentsMargins(0, 0, 10, 0)
+        inner.setSpacing(12)
+        inner.addWidget(self._build_file_card())
+        inner.addWidget(self._build_mapping_card())
+        inner.addWidget(self._build_preview_card())
+        inner.addStretch(1)
+        layout.addWidget(scroll, 1)
         layout.addLayout(self._build_footer())
 
     def _build_file_card(self):
         panel = card()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(6)
-        caption = QLabel("STATEMENT FILE")
-        caption.setObjectName("accent")
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+        caption = section_title(
+            "STEP 1 · STATEMENT FILE", "Choose the account and the CSV to read."
+        )
 
         account_row = QHBoxLayout()
         account_row.addWidget(field_label("IMPORT INTO"))
@@ -154,12 +175,12 @@ class ImportCsvDialog(QDialog):
         layout.setContentsMargins(20, 14, 20, 14)
         layout.setSpacing(8)
         top = QHBoxLayout()
-        heading = QLabel("Column mapping")
-        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        top.addWidget(
+            section_title("STEP 2 · COLUMN MAPPING", "Correct any guesses before importing."),
+            1,
+        )
         remap = QPushButton("Re-read with these columns")
         remap.clicked.connect(self._remap)
-        top.addWidget(heading)
-        top.addStretch(1)
         top.addWidget(remap)
         layout.addLayout(top)
 
@@ -178,12 +199,12 @@ class ImportCsvDialog(QDialog):
         layout.setContentsMargins(20, 14, 20, 14)
         layout.setSpacing(8)
         top = QHBoxLayout()
-        heading = QLabel("Preview")
-        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        top.addWidget(
+            section_title("STEP 3 · REVIEW", "Every row is editable before it is saved."),
+            1,
+        )
         self.counts_label = BadgeLabel("0 rows")
         self.counts_label.setObjectName("badge")
-        top.addWidget(heading)
-        top.addStretch(1)
         top.addWidget(self.counts_label)
         layout.addLayout(top)
 
@@ -192,6 +213,7 @@ class ImportCsvDialog(QDialog):
         self.table.setModel(self.preview_model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(210)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)

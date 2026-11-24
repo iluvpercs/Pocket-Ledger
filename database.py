@@ -47,12 +47,22 @@ from utils.currencies import (
 )
 from utils.money import MoneyError, minor_to_decimal, parse_to_minor
 
+import release_paths
+
+# Frozen builds keep data beside the portable EXE or in LOCALAPPDATA. Source
+# runs and explicit POCKET_LEDGER_DB overrides are left untouched.
+release_paths.configure_environment()
+
 DB_PATH_ENV_VAR = "POCKET_LEDGER_DB"
 TEST_MODE_ENV_VAR = "POCKET_LEDGER_TEST_MODE"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-LIVE_DATA_DIR = PROJECT_ROOT / "data"
-LIVE_DB_PATH = LIVE_DATA_DIR / "pocket_ledger.db"
+if release_paths.is_frozen():
+    LIVE_DATA_DIR = release_paths.default_data_dir()
+    LIVE_DB_PATH = LIVE_DATA_DIR / "pocket_ledger.db"
+else:
+    LIVE_DATA_DIR = PROJECT_ROOT / "data"
+    LIVE_DB_PATH = LIVE_DATA_DIR / "pocket_ledger.db"
 
 
 class DatabaseSafetyError(RuntimeError):

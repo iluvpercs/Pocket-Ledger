@@ -10,11 +10,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QCompleter,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -30,8 +32,10 @@ from ui.theme import (
     field_label,
     page_header,
     primary_button,
+    section_title,
     styled_entry,
 )
+from utils.money import format_money
 from utils.currencies import (
     CURRENCY_PRECISION,
     SUPPORTED_PRECISIONS,
@@ -64,8 +68,8 @@ class AccountsView(QWidget):
         self._loading = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setContentsMargins(26, 22, 26, 24)
+        layout.setSpacing(16)
         layout.addWidget(
             page_header(
                 "Accounts",
@@ -81,15 +85,18 @@ class AccountsView(QWidget):
     def _build_create_card(self):
         panel = card()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
 
-        heading = QLabel("Add an account")
-        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
-        layout.addWidget(heading)
+        layout.addWidget(
+            section_title("ADD AN ACCOUNT", "One account. One currency. No conversions.")
+        )
 
-        fields = QHBoxLayout()
-        fields.setSpacing(12)
+        fields = QGridLayout()
+        fields.setHorizontalSpacing(12)
+        fields.setVerticalSpacing(10)
+        fields.setColumnStretch(0, 1)
+        fields.setColumnStretch(1, 1)
         name_column = QVBoxLayout()
         name_column.setSpacing(4)
         self.name_entry = styled_entry("e.g. Travel wallet")
@@ -121,9 +128,9 @@ class AccountsView(QWidget):
         self.add_button = primary_button("Add account")
         self.add_button.clicked.connect(self._create_account)
 
-        fields.addLayout(name_column, 3)
-        fields.addLayout(currency_column, 2)
-        fields.addWidget(self.add_button, 0, Qt.AlignBottom)
+        fields.addLayout(name_column, 0, 0)
+        fields.addLayout(currency_column, 0, 1)
+        fields.addWidget(self.add_button, 1, 0, 1, 2, Qt.AlignRight)
         layout.addLayout(fields)
 
         note = QLabel(
@@ -144,46 +151,52 @@ class AccountsView(QWidget):
     def _build_table_card(self):
         panel = card()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
 
         top = QHBoxLayout()
-        heading = QLabel("Your accounts")
-        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        top.addWidget(
+            section_title("YOUR ACCOUNTS", "Balances are shown in each account's own currency."),
+            1,
+        )
         self.count_label = BadgeLabel("")
         self.count_label.setObjectName("badge")
-        top.addWidget(heading)
         top.addWidget(self.count_label)
-        top.addStretch(1)
         layout.addLayout(top)
 
-        self.table = QTableWidget(0, 4)
+        self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ("ACCOUNT", "CURRENCY", "TRANSACTIONS", "DEFAULT")
+            ("ACCOUNT", "CURRENCY", "TRANSACTIONS", "BALANCE", "DEFAULT")
         )
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(260)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.table.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.table, 1)
 
-        actions = QHBoxLayout()
+        actions = QGridLayout()
+        actions.setHorizontalSpacing(10)
+        actions.setVerticalSpacing(8)
+        actions.setColumnStretch(0, 1)
+        actions.setColumnStretch(1, 1)
         self.rename_button = QPushButton("Rename selected")
         self.default_button = QPushButton("Make default")
         self.delete_button = danger_button("Delete selected")
         self.rename_button.clicked.connect(self._rename_selected)
         self.default_button.clicked.connect(self._make_default)
         self.delete_button.clicked.connect(self._confirm_delete)
-        actions.addWidget(self.rename_button)
-        actions.addWidget(self.default_button)
-        actions.addWidget(self.delete_button)
-        actions.addStretch(1)
+        actions.addWidget(self.rename_button, 0, 0)
+        actions.addWidget(self.default_button, 0, 1)
+        actions.addWidget(self.delete_button, 1, 0, 1, 2)
         layout.addLayout(actions)
 
         self._update_buttons()
@@ -193,10 +206,11 @@ class AccountsView(QWidget):
     def refresh(self):
         """Reload accounts and their live transaction counts."""
         self._accounts = database.list_accounts()
+        totals = database.get_account_totals()
         counts = {
-            row["account_uuid"]: int(row["transaction_count"])
-            for row in database.get_account_totals()
+            row["account_uuid"]: int(row["transaction_count"]) for row in totals
         }
+        balances = {row["account_uuid"]: row for row in totals}
         selected = self.selected_account_uuid()
 
         self._loading = True
@@ -215,12 +229,21 @@ class AccountsView(QWidget):
                     str(counts.get(account["uuid"], 0))
                 )
                 count_item.setTextAlignment(Qt.AlignCenter)
+                total = balances.get(account["uuid"], {})
+                balance_item = QTableWidgetItem(
+                    format_money(
+                        int(total.get("balance_minor", 0)),
+                        account["currency_code"],
+                        int(account["currency_precision"]),
+                    )
+                )
+                balance_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 default_item = QTableWidgetItem(
                     "Yes" if account["is_default"] else "—"
                 )
                 default_item.setTextAlignment(Qt.AlignCenter)
                 for column, item in enumerate(
-                    (name_item, currency_item, count_item, default_item)
+                    (name_item, currency_item, count_item, balance_item, default_item)
                 ):
                     self.table.setItem(row_index, column, item)
         finally:
@@ -410,6 +433,9 @@ class AccountsView(QWidget):
         self.name_entry.setFocus()
 
     def on_accounts_changed(self):
+        self.refresh()
+
+    def on_data_changed(self):
         self.refresh()
 
     # --------------------------------------------------------------- helpers

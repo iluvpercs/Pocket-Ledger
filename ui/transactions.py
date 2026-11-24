@@ -12,10 +12,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -31,10 +33,17 @@ from ui.theme import (
     field_label,
     page_header,
     primary_button,
+    section_title,
     styled_entry,
 )
 from ui.workers import run_database_task
-from utils.money import MoneyError, format_money, minor_to_decimal, parse_to_minor
+from utils.money import (
+    MoneyError,
+    format_money,
+    minor_to_decimal,
+    normalize_amount_input,
+    parse_to_minor,
+)
 
 
 def _load_rows():
@@ -143,7 +152,7 @@ class EditTransactionDialog(QDialog):
 
     def amount_minor(self):
         return parse_to_minor(
-            self.amount_entry.text().strip(),
+            normalize_amount_input(self.amount_entry.text()),
             precision=int(self.row["currency_precision"]),
             strict=True,
         )
@@ -162,7 +171,7 @@ class TransactionsView(QWidget):
         self._status_timer.timeout.connect(self._clear_status)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(26, 22, 26, 24)
         layout.setSpacing(16)
         layout.addWidget(page_header("Transactions", "Record money coming in and going out."))
         layout.addWidget(self._build_form())
@@ -174,13 +183,35 @@ class TransactionsView(QWidget):
     # ------------------------------------------------------------------ form
     def _build_form(self):
         form = card()
-        grid = QFormLayout(form)
-        grid.setContentsMargins(24, 16, 24, 14)
-        grid.setLabelAlignment(Qt.AlignLeft)
+        outer = QVBoxLayout(form)
+        outer.setContentsMargins(22, 18, 22, 18)
+        outer.setSpacing(12)
+        outer.addWidget(
+            section_title("ADD TRANSACTION", "Amounts use the selected account's currency.")
+        )
+
+        grid = QGridLayout()
         grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(6)
+        grid.setVerticalSpacing(10)
+        for column in (0, 1):
+            grid.setColumnStretch(column, 1)
+            grid.setColumnMinimumWidth(column, 250)
+
+        def labelled(caption, control):
+            holder = QWidget()
+            column = QVBoxLayout(holder)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(5)
+            label = field_label(caption)
+            column.addWidget(label)
+            column.addWidget(control)
+            return holder, label
 
         self.account_control = QComboBox()
+        self.account_control.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.account_control.setMinimumContentsLength(18)
         self.account_control.currentIndexChanged.connect(self._on_account_changed)
         self.type_control = QComboBox()
         self.type_control.addItems(["Expense", "Income"])
@@ -191,15 +222,25 @@ class TransactionsView(QWidget):
         self.date_entry.setText(date.today().isoformat())
         self.amount_hint = QLabel("")
         self.amount_hint.setObjectName("muted")
+        self.amount_hint.setWordWrap(True)
 
-        grid.addRow(field_label("ACCOUNT"), self.account_control)
-        grid.addRow(field_label("TYPE"), self.type_control)
-        self.amount_label = field_label("AMOUNT")
-        grid.addRow(self.amount_label, self.amount_entry)
-        grid.addRow("", self.amount_hint)
-        grid.addRow(field_label("CATEGORY"), self.category_entry)
-        grid.addRow(field_label("DESCRIPTION (OPTIONAL)"), self.description_entry)
-        grid.addRow(field_label("DATE (YYYY-MM-DD)"), self.date_entry)
+        account_field, _ = labelled("ACCOUNT", self.account_control)
+        type_field, _ = labelled("TYPE", self.type_control)
+        amount_field, self.amount_label = labelled("AMOUNT", self.amount_entry)
+        category_field, _ = labelled("CATEGORY", self.category_entry)
+        description_field, _ = labelled(
+            "DESCRIPTION (OPTIONAL)", self.description_entry
+        )
+        date_field, _ = labelled("DATE (YYYY-MM-DD)", self.date_entry)
+
+        grid.addWidget(account_field, 0, 0)
+        grid.addWidget(type_field, 0, 1)
+        grid.addWidget(amount_field, 1, 0)
+        grid.addWidget(category_field, 1, 1)
+        grid.addWidget(description_field, 2, 0)
+        grid.addWidget(date_field, 2, 1)
+        grid.addWidget(self.amount_hint, 3, 0, 1, 2)
+        outer.addLayout(grid)
 
         actions = QHBoxLayout()
         self.status_label = QLabel("")
@@ -216,31 +257,37 @@ class TransactionsView(QWidget):
             entry.returnPressed.connect(self._on_add)
         actions.addWidget(self.status_label, 1)
         actions.addWidget(add_button)
-        grid.addRow("", actions)
+        outer.addLayout(actions)
         return form
 
     # ----------------------------------------------------------------- table
     def _build_table(self):
         table_card = card()
         layout = QVBoxLayout(table_card)
-        layout.setContentsMargins(24, 16, 24, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
 
         top = QHBoxLayout()
-        heading = QLabel("Saved transactions")
-        heading.setStyleSheet("font-size: 14px; font-weight: 700;")
+        top.setSpacing(10)
+        top.addWidget(section_title("ALL TRANSACTIONS", "Sort and filter everything you have saved."), 1)
         self.count_label = BadgeLabel("")
         self.count_label.setObjectName("badge")
+        top.addWidget(self.count_label)
+        layout.addLayout(top)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
         self.account_filter = QComboBox()
+        self.account_filter.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.account_filter.setMinimumContentsLength(14)
         self.account_filter.setMinimumWidth(180)
         self.account_filter.currentIndexChanged.connect(self._on_filter_changed)
         self.filter_entry = styled_entry("Filter date, type, account, category, description…")
-        top.addWidget(heading)
-        top.addWidget(self.count_label)
-        top.addStretch(1)
-        top.addWidget(self.account_filter)
-        top.addWidget(self.filter_entry, 2)
-        layout.addLayout(top)
+        controls.addWidget(self.account_filter)
+        controls.addWidget(self.filter_entry, 2)
+        layout.addLayout(controls)
 
         self.error_label = QLabel("")
         self.error_label.setObjectName("statusError")
@@ -258,6 +305,8 @@ class TransactionsView(QWidget):
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setEditTriggers(QTableView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(230)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table.verticalHeader().hide()
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.doubleClicked.connect(self._on_edit)
@@ -330,7 +379,7 @@ class TransactionsView(QWidget):
         self.amount_label.setText(f"AMOUNT ({code})")
         self.amount_hint.setText(
             f"Enter up to {precision} {noun} for {code}. "
-            "Too many decimals will be rejected."
+            "Grouping commas are accepted; too many decimals are rejected."
         )
 
     def _on_filter_changed(self, _index=None):
@@ -342,6 +391,9 @@ class TransactionsView(QWidget):
 
     def on_accounts_changed(self):
         self.refresh_accounts()
+        self.refresh()
+
+    def on_data_changed(self):
         self.refresh()
 
     # ------------------------------------------------------------------ data
@@ -376,7 +428,7 @@ class TransactionsView(QWidget):
             return
 
         transaction_type = self.type_control.currentText().lower()
-        amount_text = self.amount_entry.text().strip()
+        amount_text = normalize_amount_input(self.amount_entry.text())
         category = self.category_entry.text().strip()
         description = self.description_entry.text().strip()
         transaction_date = self.date_entry.text().strip()
@@ -398,6 +450,7 @@ class TransactionsView(QWidget):
             self.description_entry.clear()
             self.date_entry.setText(date.today().isoformat())
             self.refresh()
+            self.app.notify_data_changed(source=self)
             self._set_status(
                 f"{transaction_type.capitalize()} of "
                 f"{format_money(amount_minor, account['currency_code'], int(account['currency_precision']))} added.",
@@ -492,6 +545,7 @@ class TransactionsView(QWidget):
 
         def updated(ok):
             self.refresh()
+            self.app.notify_data_changed(source=self)
             self._set_status(
                 "Transaction updated." if ok else "That transaction was already removed.",
                 "success" if ok else "error",
@@ -528,6 +582,7 @@ class TransactionsView(QWidget):
         def deleted(deleted_count):
             self._pending_deleted_ids = set(ids)
             self.refresh()
+            self.app.notify_data_changed(source=self)
             noun = "transaction" if deleted_count == 1 else "transactions"
             self._set_status(f"Deleted {deleted_count} {noun}.")
 

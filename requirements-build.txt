@@ -1,0 +1,2 @@
+# Windows release build tools (install alongside requirements.txt)
+pyinstaller==6.22.3

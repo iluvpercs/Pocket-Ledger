@@ -45,6 +45,19 @@ class MoneyError(ValueError):
     """Raised when an amount cannot be represented as integer minor units."""
 
 
+def normalize_amount_input(value):
+    """Remove grouping commas from a manually entered amount.
+
+    This is deliberately separate from :func:`parse_to_minor`: CSV import and
+    migration paths keep their own parsing rules. Manual entry can remove every
+    comma before validation, so ``31,417`` becomes ``31417`` and
+    ``1,23,456.78`` becomes ``123456.78``.
+    """
+    if value is None:
+        return ""
+    return str(value).replace(",", "").strip()
+
+
 def _decimal_unit(precision):
     if precision not in (0, 2, 3):
         raise MoneyError("Currency precision must be 0, 2 or 3.")

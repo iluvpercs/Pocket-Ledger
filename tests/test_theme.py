@@ -1,4 +1,4 @@
-"""Theme regression tests for the Strawberry palette and label backgrounds."""
+"""Theme regression tests for the brand palette and label backgrounds."""
 
 from PySide6.QtWidgets import QApplication, QLabel
 
@@ -24,24 +24,30 @@ def _contrast(foreground, background):
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def test_theme_exposes_strawberry_palette_with_readable_button_text():
-    assert theme.BACKGROUND == "#202125"
-    assert theme.PRIMARY == "#F14666"
-    assert theme.SECONDARY == "#EE8980"
-    assert theme.HIGHLIGHT == "#FFCDAA"
-    assert theme.POSITIVE == "#9CB898"
-    assert theme.NEGATIVE == "#F14666"
-    assert theme.TEXT == "#F7F3EF"
-    assert theme.MUTED == "#C8BAB2"
+def test_theme_exposes_brand_palette_with_readable_button_text():
+    assert theme.BLACK == "#000000"
+    assert theme.VIOLET == "#7D39EB"
+    assert theme.LIME == "#C6FF33"
+    assert theme.WHITE == "#FFFFFF"
 
-    # Legacy names still resolve to the new palette.
+    assert theme.BACKGROUND == theme.BLACK
+    assert theme.PRIMARY == theme.VIOLET
+    assert theme.SECONDARY == theme.LIME
+    assert theme.HIGHLIGHT == theme.LIME
+    assert theme.POSITIVE == theme.LIME
+    assert theme.NEGATIVE == theme.VIOLET
+    assert theme.TEXT == theme.WHITE
+    assert theme.MUTED == theme.WHITE
+
+    # Legacy names still resolve to the brand palette.
     assert theme.COLORS["accent"] == theme.PRIMARY
     assert theme.COLORS["success"] == theme.POSITIVE
     assert theme.COLORS["danger"] == theme.NEGATIVE
     assert theme.COLORS["highlight"] == theme.HIGHLIGHT
 
     assert _contrast(theme.ON_ACCENT, theme.PRIMARY) >= 4.5
-    assert _contrast(theme.ON_ACCENT, theme.SECONDARY) >= 4.5
+    assert _contrast(theme.ON_LIME, theme.SECONDARY) >= 4.5
+    assert _contrast(theme.WHITE, theme.BLACK) >= 4.5
 
 
 def test_main_window_labels_have_transparent_backgrounds(qapp, temp_database):
