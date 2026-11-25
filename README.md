@@ -34,6 +34,29 @@
 </p>
 <p align="center">Check everything before it's saved.</p>
 
+## Android app
+
+The same private ledger on your phone. Works offline, with no account, no network and no tracking.
+
+<p align="center">
+  <img src="screenshots/mobile-01-dashboard.jpg" width="250" alt="Mobile dashboard">
+  <img src="screenshots/mobile-02-transactions.jpg" width="250" alt="Mobile transaction list">
+  <img src="screenshots/mobile-03-accounts.jpg" width="250" alt="Mobile accounts">
+  <img src="screenshots/mobile-04-add-transaction.jpg" width="250" alt="Add a transaction on mobile">
+  <img src="screenshots/mobile-05-settings.jpg" width="250" alt="Mobile settings">
+</p>
+
+<p align="center">Your balance, spending and trends at a glance.</p>
+<p align="center">Every transaction in one list.</p>
+<p align="center">All your accounts and balances.</p>
+<p align="center">Add a transaction in seconds.</p>
+<p align="center">Settings and your data, all on your phone.</p>
+
+```bash
+cd mobile
+flutter build apk --release --split-per-abi
+```
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
