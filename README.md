@@ -52,11 +52,6 @@ The same private ledger on your phone. Works offline, with no account, no networ
 <p align="center">Add a transaction in seconds.</p>
 <p align="center">Settings and your data, all on your phone.</p>
 
-```bash
-cd mobile
-flutter build apk --release --split-per-abi
-```
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
