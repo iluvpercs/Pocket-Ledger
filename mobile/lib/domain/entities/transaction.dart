@@ -51,6 +51,12 @@ final class LedgerTransaction {
   bool get isLive => deletedAt == null;
 
   LedgerTransaction copyWith({
+    TransactionType? type,
+    MinorAmount? amount,
+    Uuid? accountUuid,
+    String? category,
+    String? description,
+    String? transactionDate,
     UtcMs? updatedAt,
     UtcMs? deletedAt,
     int? revision,
@@ -60,12 +66,12 @@ final class LedgerTransaction {
     return LedgerTransaction(
       id: id,
       uuid: uuid,
-      type: type,
-      amount: amount,
-      accountUuid: accountUuid,
-      category: category,
-      description: description,
-      transactionDate: transactionDate,
+      type: type ?? this.type,
+      amount: amount ?? this.amount,
+      accountUuid: accountUuid ?? this.accountUuid,
+      category: category ?? this.category,
+      description: description ?? this.description,
+      transactionDate: transactionDate ?? this.transactionDate,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,

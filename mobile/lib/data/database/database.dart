@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite3_lib;
 
 import 'package:pocket_ledger_mobile/data/database/tables/tables.dart';
 import 'package:pocket_ledger_mobile/data/mappers/sync_payload.dart';
-import 'package:pocket_ledger_mobile/domain/entities/account.dart';
+import 'package:pocket_ledger_mobile/domain/entities/account.dart' as domain_account;
 import 'package:pocket_ledger_mobile/domain/entities/ledger_constants.dart';
 import 'package:pocket_ledger_mobile/domain/entities/sync_state.dart';
 import 'package:pocket_ledger_mobile/domain/value_objects/currency_code.dart';
@@ -79,20 +79,22 @@ class AppDatabase extends _$AppDatabase {
     final now = UtcMs.now();
     final deviceName = 'Pocket Ledger Phone';
 
-    await into(appMeta).insertAll([
-      AppMetaCompanion.insert(
-        key: LedgerConstants.appMetaDeviceIdKey,
-        value: deviceId.value,
-      ),
-      AppMetaCompanion.insert(
-        key: LedgerConstants.appMetaDeviceNameKey,
-        value: deviceName,
-      ),
-      AppMetaCompanion.insert(
-        key: LedgerConstants.appMetaDevicePlatformKey,
-        value: LedgerConstants.androidPlatform,
-      ),
-    ]);
+    await batch((items) {
+      items.insertAll(appMeta, [
+        AppMetaCompanion.insert(
+          key: LedgerConstants.appMetaDeviceIdKey,
+          value: deviceId.value,
+        ),
+        AppMetaCompanion.insert(
+          key: LedgerConstants.appMetaDeviceNameKey,
+          value: deviceName,
+        ),
+        AppMetaCompanion.insert(
+          key: LedgerConstants.appMetaDevicePlatformKey,
+          value: LedgerConstants.androidPlatform,
+        ),
+      ]);
+    });
 
     await into(devices).insert(
       DevicesCompanion.insert(
@@ -102,7 +104,7 @@ class AppDatabase extends _$AppDatabase {
       ),
     );
 
-    final account = Account(
+    final account = domain_account.Account(
       uuid: Uuid.parse(LedgerConstants.defaultAccountUuid),
       name: LedgerConstants.defaultAccountName,
       currencyCode: CurrencyCode.parse(LedgerConstants.defaultCurrencyCode),

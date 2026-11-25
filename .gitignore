@@ -39,3 +39,15 @@ Thumbs.db
 # Real bank statements
 *.pdf
 tests/fixtures/real_*
+
+# Flutter mobile app
+mobile/.dart_tool/
+mobile/build/
+mobile/coverage/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.pub-cache/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/android/app/*.jks

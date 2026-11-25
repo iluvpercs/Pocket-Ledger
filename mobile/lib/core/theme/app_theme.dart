@@ -1,8 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'app_colors.dart';
 
-/// Minimal dark Material 3 theme using the existing brand palette.
+/// Material 3 themes using the existing brand palette.
 abstract final class AppTheme {
   static ThemeData get dark {
     const background = Color(0xFF0B0B0D);
@@ -27,17 +27,62 @@ abstract final class AppTheme {
       surfaceContainerHighest: surface,
       onSurfaceVariant: Color(0xFFB8B8C0),
       outline: outline,
-      background: background,
-      onBackground: AppColors.white,
     );
 
+    return _theme(
+      colorScheme: colorScheme,
+      background: background,
+      surface: surface,
+      outline: outline,
+    );
+  }
+
+  static ThemeData get light {
+    const background = Color(0xFFF7F7FA);
+    const surface = Color(0xFFFFFFFF);
+    const outline = Color(0xFFD8D8E0);
+
+    final colorScheme = ColorScheme.light(
+      primary: AppColors.violet,
+      onPrimary: AppColors.white,
+      primaryContainer: Color(0xFFEDE3FF),
+      onPrimaryContainer: Color(0xFF25104A),
+      secondary: Color(0xFF4B6B00),
+      onSecondary: AppColors.white,
+      secondaryContainer: Color(0xFFE4FFA8),
+      onSecondaryContainer: Color(0xFF1F2B00),
+      tertiary: Color(0xFF4B6B00),
+      onTertiary: AppColors.white,
+      error: Color(0xFFB3261E),
+      onError: AppColors.white,
+      surface: surface,
+      onSurface: Color(0xFF101014),
+      surfaceContainerHighest: background,
+      onSurfaceVariant: Color(0xFF4E4E57),
+      outline: outline,
+    );
+
+    return _theme(
+      colorScheme: colorScheme,
+      background: background,
+      surface: surface,
+      outline: outline,
+    );
+  }
+
+  static ThemeData _theme({
+    required ColorScheme colorScheme,
+    required Color background,
+    required Color surface,
+    required Color outline,
+  }) {
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: background,
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: background,
-        foregroundColor: AppColors.white,
+        foregroundColor: colorScheme.onSurface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
@@ -48,21 +93,21 @@ abstract final class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: outline),
+          side: BorderSide(color: outline),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: AppColors.violet,
-          foregroundColor: AppColors.white,
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
           minimumSize: const Size.fromHeight(52),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
         ),
       ),
-      iconTheme: const IconThemeData(color: AppColors.white),
-      dividerTheme: const DividerThemeData(color: outline, space: 1),
+      iconTheme: IconThemeData(color: colorScheme.onSurface),
+      dividerTheme: DividerThemeData(color: outline, space: 1),
     );
   }
 }

@@ -12,6 +12,10 @@ CREATE INDEX idx_tx_account_date
 ON transactions(account_uuid, transaction_date DESC, id DESC)
 ''')
 @TableIndex.sql('''
+CREATE INDEX idx_tx_account_date_deleted
+ON transactions(account_uuid, transaction_date, deleted_at_ms)
+''')
+@TableIndex.sql('''
 CREATE UNIQUE INDEX idx_tx_account_import_hash
 ON transactions(account_uuid, import_hash)
 WHERE import_hash IS NOT NULL AND deleted_at_ms IS NULL

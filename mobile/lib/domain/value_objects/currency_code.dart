@@ -7,7 +7,20 @@ import 'currency_table.dart';
 final class CurrencyCode {
   const CurrencyCode._(this.value);
 
+  static const CurrencyCode inr = CurrencyCode._('INR');
+  static const Set<int> supportedPrecisions = {0, 2, 3};
+
   final String value;
+
+  /// Sorted ISO codes the desktop schema can actually store.
+  static List<String> supportedCodes() {
+    final codes = currencyPrecision.entries
+        .where((entry) => supportedPrecisions.contains(entry.value))
+        .map((entry) => entry.key)
+        .toList()
+      ..sort();
+    return codes;
+  }
 
   factory CurrencyCode.parse(Object? input) {
     if (input == null) {

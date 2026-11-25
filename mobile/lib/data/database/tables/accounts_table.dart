@@ -6,6 +6,7 @@ ON accounts(is_default)
 WHERE is_default = 1 AND deleted_at_ms IS NULL
 ''')
 @TableIndex(name: 'idx_accounts_live', columns: {#deletedAtMs, #name})
+@DataClassName('AccountRow')
 class Accounts extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get uuid => text().unique()();

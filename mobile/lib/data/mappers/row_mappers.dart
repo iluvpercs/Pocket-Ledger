@@ -8,7 +8,7 @@ import 'package:pocket_ledger_mobile/domain/value_objects/money.dart';
 import 'package:pocket_ledger_mobile/domain/value_objects/transaction_type.dart';
 import 'package:pocket_ledger_mobile/domain/value_objects/utc_ms.dart';
 
-Account mapAccount(generated.Account row) => Account(
+Account mapAccount(generated.AccountRow row) => Account(
   uuid: Uuid.parse(row.uuid),
   name: row.name,
   currencyCode: CurrencyCode.parse(row.currencyCode),
